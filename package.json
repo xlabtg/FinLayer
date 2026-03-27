@@ -1,0 +1,26 @@
+{
+  "name": "finlayer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FinLayer — financial API layer for AI agents",
+  "workspaces": [
+    "apps/*",
+    "modules/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "bun run --cwd apps/api dev",
+    "build": "bun run --cwd apps/api build",
+    "test": "bun test",
+    "test:e2e": "bun run --cwd apps/api test:e2e",
+    "db:migrate": "bun run --cwd apps/api db:migrate",
+    "docs:generate": "bun run --cwd apps/api docs:generate",
+    "publish:sdk": "bun run --cwd packages/sdk publish",
+    "lint": "bun run --cwd apps/api lint",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0"
+  }
+}

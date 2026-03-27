@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@finlayer/types": ["./packages/types/src/index.ts"],
+      "@finlayer/utils": ["./packages/utils/src/index.ts"],
+      "@finlayer/sdk": ["./packages/sdk/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "dist"]
+}

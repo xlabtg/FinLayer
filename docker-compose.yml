@@ -1,0 +1,99 @@
+version: '3.9'
+
+# FinLayer — Local Development Stack
+# Usage: docker-compose up
+# Then: curl http://localhost:3000/health
+
+services:
+  # ─── PostgreSQL Database ───────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: finlayer-postgres
+    environment:
+      POSTGRES_DB: finlayer
+      POSTGRES_USER: finlayer
+      POSTGRES_PASSWORD: finlayer_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finlayer -d finlayer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Redis (for production rate limiting & quote cache) ────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: finlayer-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ─── Database Migrations ───────────────────────────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: builder
+    container_name: finlayer-migrate
+    command: bun run db:migrate
+    environment:
+      DATABASE_URL: postgresql://finlayer:finlayer_dev_password@postgres:5432/finlayer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ─── FinLayer API ──────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: builder
+    container_name: finlayer-api
+    command: bun run --cwd apps/api dev
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      HOST: 0.0.0.0
+      LOG_LEVEL: debug
+      DATABASE_URL: postgresql://finlayer:finlayer_dev_password@postgres:5432/finlayer
+      REDIS_URL: redis://redis:6379
+      API_BASE_URL: http://localhost:3000
+      # Provider API keys (set in .env.local)
+      CHANGENOW_API_KEY: ${CHANGENOW_API_KEY:-demo_key}
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:3001"
+    ports:
+      - "3000:3000"
+    volumes:
+      # Hot-reload: mount source for development
+      - ./apps:/app/apps
+      - ./modules:/app/modules
+      - ./packages:/app/packages
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
