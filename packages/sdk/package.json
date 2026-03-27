@@ -1,0 +1,28 @@
+{
+  "name": "@finlayer/sdk",
+  "version": "0.1.0-beta.1",
+  "description": "TypeScript SDK for FinLayer financial API — agent-first design",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "keywords": [
+    "finlayer",
+    "crypto",
+    "swap",
+    "payments",
+    "earn",
+    "ai-agent",
+    "hive-mind",
+    "financial-api"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xlabtg/FinLayer"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@finlayer/types": "workspace:*"
+  }
+}

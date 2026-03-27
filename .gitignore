@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.env.local
+.env
+*.local
+bun.lockb
+
+# Database
+*.sqlite
+*.db
+
+# Logs
+*.log
+ci-logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

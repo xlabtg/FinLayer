@@ -1,0 +1,176 @@
+/**
+ * modules/shared/types
+ * Internal types for module-to-module communication.
+ */
+
+import type { UUID, Numeric, ISO8601, ApiKeyScope, ProviderDomain, TransactionStatus } from '@finlayer/types';
+
+// ─── Provider Adapter Interface ────────────────────────────────────────────────
+
+/**
+ * Universal interface all provider adapters must implement.
+ * Providers are plug-in adapters for external financial services.
+ */
+export interface IProviderAdapter {
+  readonly name: string;
+  readonly domain: ProviderDomain;
+  readonly supportedAssets: string[];
+
+  isHealthy(): Promise<boolean>;
+}
+
+export interface ISwapProviderAdapter extends IProviderAdapter {
+  readonly domain: 'swap';
+
+  getQuote(params: SwapQuoteParams): Promise<SwapQuoteResult>;
+  executeSwap(params: SwapExecuteParams): Promise<SwapExecuteResult>;
+  getTransactionStatus(providerTxId: string): Promise<SwapStatusResult>;
+}
+
+export interface IPaymentProviderAdapter extends IProviderAdapter {
+  readonly domain: 'payments';
+
+  createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult>;
+  getInvoiceStatus(providerInvoiceId: string): Promise<InvoiceStatusResult>;
+}
+
+export interface IEarnProviderAdapter extends IProviderAdapter {
+  readonly domain: 'earn';
+
+  getStrategies(): Promise<EarnStrategyResult[]>;
+  deposit(params: EarnDepositParams): Promise<EarnDepositResult>;
+  withdraw(params: EarnWithdrawParams): Promise<EarnWithdrawResult>;
+}
+
+// ─── Swap Adapter Types ────────────────────────────────────────────────────────
+
+export interface SwapQuoteParams {
+  fromAsset: string;
+  toAsset: string;
+  amount: Numeric;
+  fromNetwork?: string;
+  toNetwork?: string;
+}
+
+export interface SwapQuoteResult {
+  providerQuoteId: string;
+  fromAsset: string;
+  toAsset: string;
+  fromAmount: Numeric;
+  toAmount: Numeric;
+  rate: Numeric;
+  networkFee: Numeric;
+  feeAsset: string;
+  estimatedDurationSeconds: number;
+  expiresAt: ISO8601;
+  minAmount: Numeric;
+  maxAmount: Numeric;
+}
+
+export interface SwapExecuteParams {
+  providerQuoteId: string;
+  recipientAddress: string;
+  refundAddress?: string;
+}
+
+export interface SwapExecuteResult {
+  providerTxId: string;
+  depositAddress: string;
+  status: TransactionStatus;
+}
+
+export interface SwapStatusResult {
+  providerTxId: string;
+  status: TransactionStatus;
+  txHash?: string;
+  completedAt?: ISO8601;
+}
+
+// ─── Payment Adapter Types ────────────────────────────────────────────────────
+
+export interface InvoiceCreateParams {
+  asset: string;
+  amount: Numeric;
+  network?: string;
+  description?: string;
+  expiresInSeconds?: number;
+  callbackUrl?: string;
+}
+
+export interface InvoiceResult {
+  providerInvoiceId: string;
+  paymentAddress: string;
+  expiresAt: ISO8601;
+}
+
+export interface InvoiceStatusResult {
+  providerInvoiceId: string;
+  status: 'pending' | 'paid' | 'expired' | 'overpaid' | 'underpaid';
+  paidAmount?: Numeric;
+  txHash?: string;
+  paidAt?: ISO8601;
+}
+
+// ─── Earn Adapter Types ───────────────────────────────────────────────────────
+
+export interface EarnStrategyResult {
+  providerStrategyId: string;
+  asset: string;
+  network: string;
+  apy: Numeric;
+  apy30d: Numeric;
+  riskLevel: 'low' | 'medium' | 'high';
+  minDeposit: Numeric;
+  maxDeposit?: Numeric;
+  lockPeriodDays: number;
+  protocol: string;
+  description: string;
+}
+
+export interface EarnDepositParams {
+  strategyId: string;
+  amount: Numeric;
+  fromAddress: string;
+}
+
+export interface EarnDepositResult {
+  providerPositionId: string;
+  depositAddress: string;
+  status: TransactionStatus;
+}
+
+export interface EarnWithdrawParams {
+  providerPositionId: string;
+  toAddress: string;
+}
+
+export interface EarnWithdrawResult {
+  txHash: string;
+  status: TransactionStatus;
+}
+
+// ─── Request Context ──────────────────────────────────────────────────────────
+
+export interface RequestContext {
+  requestId: UUID;
+  apiKeyId: UUID;
+  userId: UUID;
+  scopes: ApiKeyScope[];
+  affiliateId?: UUID;
+  idempotencyKey?: string;
+  timestamp: ISO8601;
+}
+
+// ─── Revenue Context ──────────────────────────────────────────────────────────
+
+export interface RevenueConfig {
+  platformShareRatio: number;    // e.g. 0.60 = 60%
+  affiliateShareRatio: number;   // e.g. 0.40 = 40%
+  platformFeePercent: number;    // e.g. 0.003 = 0.3% on top of provider fee
+}
+
+export const DEFAULT_REVENUE_CONFIG: RevenueConfig = {
+  platformShareRatio: 0.6,
+  affiliateShareRatio: 0.4,
+  platformFeePercent: 0.003,
+};
