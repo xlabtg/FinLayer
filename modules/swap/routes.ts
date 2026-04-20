@@ -10,6 +10,7 @@ import { ChangeNOWAdapter } from '../providers/changenow/adapter.js';
 import { ValidationError, FinLayerError } from '../shared/errors/index.js';
 import type { ISwapProviderAdapter } from '../shared/types/index.js';
 import { logger } from '../shared/utils/logger.js';
+import { buildCacheFromEnv } from '../shared/cache/index.js';
 
 const QuoteRequestSchema = z.object({
   from_asset: z.string().min(2).max(10).toUpperCase(),
@@ -40,7 +41,9 @@ export async function swapRoutes(fastify: FastifyInstance): Promise<void> {
     logger.warn('CHANGENOW_API_KEY not set — swap provider not available in production');
   }
 
-  const swapService = new SwapService(fastify.sql, providers);
+  // Boot cache backend (Redis if REDIS_URL set, otherwise in-memory).
+  const cache = await buildCacheFromEnv();
+  const swapService = new SwapService(fastify.sql, providers, { cache });
 
   /**
    * GET /v1/swap/providers

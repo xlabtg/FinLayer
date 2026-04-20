@@ -1,0 +1,16 @@
+{
+  "name": "@finlayer/agent-plugin",
+  "version": "0.1.0",
+  "description": "Hive Mind agent plugin for FinLayer — exposes `solve financial-task` capability",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "test": "bun test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@finlayer/sdk": "workspace:*",
+    "@finlayer/types": "workspace:*"
+  }
+}

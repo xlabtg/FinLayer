@@ -20,6 +20,8 @@ import { swapRoutes } from '../../../modules/swap/routes.js';
 import { earnRoutes } from '../../../modules/earn/routes.js';
 import { affiliateRoutes } from '../../../modules/affiliate/routes.js';
 import { paymentsRoutes } from '../../../modules/payments/routes.js';
+import { analyticsRoutes } from '../../../modules/analytics/routes.js';
+import { marketplaceRoutes } from '../../../modules/marketplace/routes.js';
 import { walletRoutes } from '../../../modules/wallet/routes.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
@@ -122,6 +124,8 @@ Authorization: Bearer fl_live_<your-key>
         { name: 'Earn', description: 'Yield strategies and lending (Phase 3)' },
         { name: 'Wallet', description: 'Non-custodial wallet management (Phase 4)' },
         { name: 'Affiliate', description: 'Revenue sharing and affiliate tracking' },
+        { name: 'Analytics', description: 'Cross-domain revenue dashboard (Phase 5)' },
+        { name: 'Marketplace', description: 'Affiliate deep-link generator (Phase 5)' },
       ],
     },
   });
@@ -191,6 +195,8 @@ Authorization: Bearer fl_live_<your-key>
     v1.register(paymentsRoutes, { prefix: '/payments' });
     v1.register(earnRoutes, { prefix: '/earn' });
     v1.register(affiliateRoutes, { prefix: '/affiliate' });
+    v1.register(analyticsRoutes, { prefix: '/analytics' });
+    v1.register(marketplaceRoutes, { prefix: '/marketplace' });
     v1.register(walletRoutes, { prefix: '/wallet' });
   }, { prefix: `/${API_VERSION}` });
 
