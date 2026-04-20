@@ -34,6 +34,8 @@ export type { FinLayerClientConfig } from './client.js';
 export { SwapModule } from './modules/swap.js';
 export { PaymentsModule } from './modules/payments.js';
 export { EarnModule } from './modules/earn.js';
+export { WalletModule } from './modules/wallet.js';
+export type { WalletGenerateResponse, SupportedWalletPair } from './modules/wallet.js';
 
 // Re-export all types for convenience
 export type * from '@finlayer/types';
@@ -43,6 +45,7 @@ import type { FinLayerClientConfig } from './client.js';
 import { SwapModule } from './modules/swap.js';
 import { PaymentsModule } from './modules/payments.js';
 import { EarnModule } from './modules/earn.js';
+import { WalletModule } from './modules/wallet.js';
 
 /**
  * Main FinLayer SDK client.
@@ -67,16 +70,19 @@ import { EarnModule } from './modules/earn.js';
 export class HiveFinance extends FinLayerClient {
   /** Crypto exchange aggregation */
   public readonly swap: SwapModule;
-  /** Yield strategy aggregation (Aave V3, Compound V3, …) */
-  public readonly earn: EarnModule;
   /** Fiat on-ramp and crypto invoices */
   public readonly payments: PaymentsModule;
+  /** Yield strategy aggregation (Aave V3, Compound V3, …) */
+  public readonly earn: EarnModule;
+  /** Non-custodial HD wallet management (Phase 4) */
+  public readonly wallet: WalletModule;
 
   constructor(config: FinLayerClientConfig) {
     super(config);
     this.swap = new SwapModule(this);
     this.payments = new PaymentsModule(this);
     this.earn = new EarnModule(this);
+    this.wallet = new WalletModule(this);
   }
 }
 

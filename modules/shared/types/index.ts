@@ -58,6 +58,33 @@ export interface IEarnProviderAdapter extends IProviderAdapter {
   getPosition(providerPositionId: string): Promise<EarnPositionResult>;
 }
 
+/**
+ * Wallet balance provider (e.g., Alchemy, Moralis, Etherscan).
+ * Providers are keyed by network and queried on demand.
+ */
+export interface IWalletBalanceProvider {
+  readonly name: string;
+  readonly supportedNetworks: string[];
+
+  getNativeBalance(params: BalanceQueryParams): Promise<WalletBalanceResult>;
+  getTokenBalances?(params: BalanceQueryParams): Promise<WalletBalanceResult[]>;
+}
+
+export interface BalanceQueryParams {
+  network: string;
+  address: string;
+}
+
+export interface WalletBalanceResult {
+  network: string;
+  address: string;
+  asset: string;
+  balance: Numeric;
+  decimals: number;
+  balanceUsd?: Numeric;
+  updatedAt: ISO8601;
+}
+
 // ─── Swap Adapter Types ────────────────────────────────────────────────────────
 
 export interface SwapQuoteParams {

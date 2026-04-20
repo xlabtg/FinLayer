@@ -275,6 +275,54 @@ export class DuplicateIdempotencyKeyError extends FinLayerError {
   }
 }
 
+// ─── Wallet Errors ────────────────────────────────────────────────────────────
+
+export class WalletNotFoundError extends FinLayerError {
+  constructor() {
+    super('WALLET_NOT_FOUND', 'No wallet exists for this user', 'wallet', 404, {
+      suggestion: 'Create a wallet via POST /v1/wallet/generate',
+    });
+  }
+}
+
+export class UnsupportedAssetError extends FinLayerError {
+  constructor(asset: string, network: string) {
+    super(
+      'UNSUPPORTED_ASSET',
+      `Wallet generation is not supported for ${asset} on ${network}`,
+      'wallet',
+      400,
+      {
+        suggestion: 'See GET /v1/wallet/supported for supported asset/network pairs',
+      }
+    );
+  }
+}
+
+export class WalletConfigError extends FinLayerError {
+  constructor(message: string) {
+    super('WALLET_CONFIG_ERROR', message, 'wallet', 500, {
+      suggestion: 'Set WALLET_ENCRYPTION_KEY to a 32-byte base64 or hex string',
+    });
+  }
+}
+
+export class BalanceProviderError extends FinLayerError {
+  constructor(providerName: string, originalMessage: string) {
+    super(
+      'BALANCE_PROVIDER_ERROR',
+      `${providerName} balance lookup failed: ${originalMessage}`,
+      'wallet',
+      502,
+      {
+        retryable: true,
+        retry_after_ms: 5000,
+        suggestion: 'Retry after a short delay or query a different provider',
+      }
+    );
+  }
+}
+
 // ─── Provider Adapter Interface ────────────────────────────────────────────────
 
 export { FinLayerError as default };

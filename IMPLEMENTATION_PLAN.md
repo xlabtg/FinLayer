@@ -111,16 +111,18 @@ packages/sdk            ← Depends on: types (HTTP client, no server code)
 
 **Goal**: Non-custodial key management, HD wallets
 
-| Task | SP | Risk |
-|------|----|------|
-| [WALLET] HD wallet generation (BIP39/BIP44) | 5 | High (key security is critical) |
-| [WALLET] Multi-chain address generation | 5 | High |
-| [WALLET] Balance queries (Alchemy/Moralis) | 3 | Medium |
-| [AFFILIATE] Payout scheduler (cron) | 5 | Medium |
-| [OBS] Prometheus metrics | 3 | Low |
-| [OBS] Sentry integration | 2 | Low |
+| Task | SP | Status |
+|------|----|--------|
+| [WALLET] HD wallet generation (BIP39/BIP44) | 5 | ✅ Done |
+| [WALLET] Multi-chain address generation | 5 | ✅ Done |
+| [WALLET] Balance queries (Alchemy/Moralis) | 3 | ✅ Done (Alchemy adapter + MockBalance) |
+| [AFFILIATE] Payout scheduler (cron) | 5 | ✅ Done |
+| [OBS] Prometheus metrics | 3 | ✅ Done |
+| [OBS] Sentry integration | 2 | ✅ Done |
 
-**Risk**: Private key management is the highest-risk component. Must be audited before production. Consider MPC approach (Fireblocks/Lit Protocol) to eliminate single-point-of-failure.
+**Total Phase 4**: ~23 story points
+
+**Risk**: Private key management is the highest-risk component. The current implementation encrypts mnemonics at rest with AES-256-GCM (`WALLET_ENCRYPTION_KEY`) — this is a development baseline, **not production-ready**. Must be audited and migrated to MPC / HSM (Fireblocks, Lit Protocol) before handling real user funds.
 
 ---
 
@@ -182,8 +184,8 @@ packages/sdk            ← Depends on: types (HTTP client, no server code)
 - [x] OpenAPI docs at `/docs`
 - [x] Docker + docker-compose for local dev
 - [ ] Redis rate limiting (Phase 2 — currently in-memory)
-- [ ] Prometheus metrics (Phase 4)
-- [ ] Sentry error tracking (Phase 4)
+- [x] Prometheus metrics (Phase 4)
+- [x] Sentry error tracking (Phase 4)
 - [ ] ≥80% test coverage (Phase 1 covers critical paths)
 
 ---

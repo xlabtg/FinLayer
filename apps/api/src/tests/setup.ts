@@ -379,6 +379,142 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return Promise.resolve([]);
       }
 
+      // ─── Wallet tables ─────────────────────────────────────────────────────
+
+      if (query.startsWith('SELECT') && query.includes('FROM USER_WALLETS')) {
+        const userId = values[0];
+        const rows = initTable('user_wallets').filter(r => r['user_id'] === userId);
+        return Promise.resolve(rows);
+      }
+
+      if (query.startsWith('INSERT INTO USER_WALLETS')) {
+        const row: MockRow = {
+          id: values[0],
+          user_id: values[1],
+          encrypted_mnemonic: values[2],
+          encryption_version: values[3],
+          derivation_scheme: values[4],
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+        initTable('user_wallets').push(row);
+        return Promise.resolve([row]);
+      }
+
+      if (query.startsWith('SELECT') && query.includes('FROM WALLET_ADDRESSES')) {
+        const addresses = initTable('wallet_addresses');
+        // Detect filter variants used by the service
+        if (query.includes('USER_ID') && query.includes('ASSET') && query.includes('NETWORK')) {
+          const [userId, asset, network] = values as [string, string, string];
+          const rows = addresses.filter(r =>
+            r['user_id'] === userId && r['asset'] === asset && r['network'] === network
+          );
+          return Promise.resolve(rows);
+        }
+        if (/\bID\s*=/.test(query) && query.includes('USER_ID')) {
+          const [id, userId] = values as [string, string];
+          const rows = addresses.filter(r => r['id'] === id && r['user_id'] === userId);
+          return Promise.resolve(rows);
+        }
+        if (query.includes('USER_ID')) {
+          const [userId] = values as [string];
+          const rows = addresses.filter(r => r['user_id'] === userId);
+          return Promise.resolve(rows);
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('INSERT INTO WALLET_ADDRESSES')) {
+        const row: MockRow = {
+          id: values[0],
+          user_id: values[1],
+          asset: values[2],
+          network: values[3],
+          address: values[4],
+          label: values[5],
+          derivation_path: values[6],
+          account_index: values[7],
+          address_index: values[8],
+          public_key: values[9],
+          created_at: new Date(),
+        };
+        initTable('wallet_addresses').push(row);
+        return Promise.resolve([row]);
+      }
+
+      // ─── Affiliate payout scheduler tables ─────────────────────────────────
+
+      if (query.includes('FROM AFFILIATES A') && query.includes('JOIN REVENUE_EVENTS')) {
+        // Aggregated eligibility scan — group undistributed events per affiliate.
+        const affiliates = initTable('affiliates');
+        const events = initTable('revenue_events');
+        const result: MockRow[] = [];
+        for (const aff of affiliates) {
+          if (!aff['payout_address']) continue;
+          const pending = events.filter(e =>
+            e['affiliate_id'] === aff['id'] && !e['distributed_at']
+          );
+          if (pending.length === 0) continue;
+          const total = pending.reduce((acc, e) => {
+            return acc + (parseFloat(String(e['total_fee'])) * parseFloat(String(e['affiliate_share'])));
+          }, 0);
+          result.push({
+            affiliate_id: aff['id'],
+            payout_address: aff['payout_address'],
+            total_pending: total.toFixed(8),
+            event_count: String(pending.length),
+          });
+        }
+        return Promise.resolve(result);
+      }
+
+      if (query.startsWith('SELECT ID, TOTAL_FEE, AFFILIATE_SHARE') && query.includes('REVENUE_EVENTS')) {
+        const [affiliateId] = values as [string];
+        const events = initTable('revenue_events').filter(e =>
+          e['affiliate_id'] === affiliateId && !e['distributed_at']
+        );
+        return Promise.resolve(events.map(e => ({
+          id: e['id'],
+          total_fee: e['total_fee'],
+          affiliate_share: e['affiliate_share'],
+        })));
+      }
+
+      if (query.startsWith('INSERT INTO AFFILIATE_PAYOUTS')) {
+        const row: MockRow = {
+          id: values[0],
+          affiliate_id: values[1],
+          amount: values[2],
+          asset: values[3],
+          payout_address: values[4],
+          status: 'pending',
+          event_count: values[5],
+          scheduled_at: new Date(),
+          processed_at: null,
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+        initTable('affiliate_payouts').push(row);
+        return Promise.resolve([row]);
+      }
+
+      if (query.startsWith('INSERT INTO AFFILIATE_PAYOUT_ITEMS')) {
+        const row: MockRow = {
+          payout_id: values[0],
+          revenue_event_id: values[1],
+          amount: values[2],
+        };
+        initTable('affiliate_payout_items').push(row);
+        return Promise.resolve([row]);
+      }
+
+      if (query.startsWith('UPDATE REVENUE_EVENTS') && query.includes('DISTRIBUTED_AT')) {
+        const [eventId] = values as [string];
+        const row = initTable('revenue_events').find(r => r['id'] === eventId);
+        if (row) row['distributed_at'] = new Date();
+        return Promise.resolve([]);
+      }
+
       // ─── Payments ──────────────────────────────────────────────────────────
 
       if (query.startsWith('INSERT INTO INVOICES')) {

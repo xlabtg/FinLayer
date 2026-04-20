@@ -12,6 +12,9 @@ import helmet from '@fastify/helmet';
 import databasePlugin from './plugins/database.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
 import authPlugin from '../../../modules/auth/plugin.js';
+import payoutSchedulerPlugin from '../../../modules/affiliate/scheduler-plugin.js';
+import metricsPlugin from '../../../modules/observability/metrics.js';
+import sentryPlugin from '../../../modules/observability/sentry.js';
 import { authRoutes } from '../../../modules/auth/routes.js';
 import { swapRoutes } from '../../../modules/swap/routes.js';
 import { earnRoutes } from '../../../modules/earn/routes.js';
@@ -19,6 +22,7 @@ import { affiliateRoutes } from '../../../modules/affiliate/routes.js';
 import { paymentsRoutes } from '../../../modules/payments/routes.js';
 import { analyticsRoutes } from '../../../modules/analytics/routes.js';
 import { marketplaceRoutes } from '../../../modules/marketplace/routes.js';
+import { walletRoutes } from '../../../modules/wallet/routes.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
@@ -137,9 +141,12 @@ Authorization: Bearer fl_live_<your-key>
 
   // ─── Core Plugins ──────────────────────────────────────────────────────────
 
+  await app.register(sentryPlugin);
+  await app.register(metricsPlugin);
   await app.register(databasePlugin);
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin);
+  await app.register(payoutSchedulerPlugin);
 
   // Capture raw JSON body so payment webhook routes can verify provider
   // HMAC signatures against the exact bytes delivered.
@@ -190,6 +197,7 @@ Authorization: Bearer fl_live_<your-key>
     v1.register(affiliateRoutes, { prefix: '/affiliate' });
     v1.register(analyticsRoutes, { prefix: '/analytics' });
     v1.register(marketplaceRoutes, { prefix: '/marketplace' });
+    v1.register(walletRoutes, { prefix: '/wallet' });
   }, { prefix: `/${API_VERSION}` });
 
   // Affiliate redirect routes (outside /v1/ prefix)
