@@ -111,22 +111,28 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('INSERT INTO TRANSACTIONS')) {
+        // The swap service inlines 'swap', 'swap' as literals for type/domain,
+        // so only 13 template values are bound (id, status, user_id, ..., updated_at).
+        const parseMaybeJson = (v: unknown) => {
+          if (typeof v !== 'string') return v;
+          try { return JSON.parse(v); } catch { return v; }
+        };
         const row: MockRow = {
           id: values[0],
-          type: values[1],
-          domain: values[2],
-          status: values[3],
-          user_id: values[4],
-          from_asset: values[5],
-          to_asset: values[6],
-          amount: values[7],
-          provider_id: values[8],
-          provider_tx_id: values[9],
-          idempotency_key: values[10],
-          affiliate_id: values[11],
-          metadata: typeof values[12] === 'string' ? JSON.parse(values[12]) : values[12],
-          created_at: new Date(values[13] as string),
-          updated_at: new Date(values[14] as string),
+          type: 'swap',
+          domain: 'swap',
+          status: values[1],
+          user_id: values[2],
+          from_asset: values[3],
+          to_asset: values[4],
+          amount: values[5],
+          provider_id: values[6],
+          provider_tx_id: values[7],
+          idempotency_key: values[8],
+          affiliate_id: values[9],
+          metadata: parseMaybeJson(values[10]),
+          created_at: new Date(values[11] as string),
+          updated_at: new Date(values[12] as string),
           revenue_event_id: null,
         };
         initTable('transactions').push(row);
