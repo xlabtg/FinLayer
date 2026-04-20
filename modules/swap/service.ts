@@ -26,6 +26,28 @@ import {
 import { RevenueService } from './revenue.js';
 import { logger } from '../shared/utils/logger.js';
 import { DEFAULT_REVENUE_CONFIG } from '../shared/types/index.js';
+import {
+  ProviderReliabilityTracker,
+  rankCandidates,
+  DEFAULT_WEIGHTS,
+  type RoutingWeights,
+} from '../shared/routing/index.js';
+import {
+  InMemoryCache,
+  swapQuoteCacheKey,
+  type ICacheBackend,
+} from '../shared/cache/index.js';
+
+interface MaterializedQuote {
+  providerName: string;
+  result: import('../shared/types/index.js').SwapQuoteResult;
+  quote: SwapQuote;
+}
+
+interface ProviderQuoteSnapshot {
+  providerName: string;
+  result: import('../shared/types/index.js').SwapQuoteResult;
+}
 
 interface DbSwapQuote {
   id: string;
@@ -66,14 +88,35 @@ interface DbTransaction {
   updated_at: Date;
 }
 
+export interface SwapServiceOptions {
+  /** Persistent TTL cache for provider quotes. Defaults to in-memory. */
+  cache?: ICacheBackend;
+  /** Quote cache TTL in seconds. Defaults to 30 — long enough to dedupe
+   *  bursty requests, short enough that rates stay fresh. */
+  cacheTtlSeconds?: number;
+  /** Reliability tracker; defaults to a fresh in-memory tracker. */
+  reliability?: ProviderReliabilityTracker;
+  /** Routing weights. Defaults to DEFAULT_WEIGHTS. */
+  routingWeights?: RoutingWeights;
+}
+
 export class SwapService {
   private readonly revenueService: RevenueService;
+  private readonly cache: ICacheBackend;
+  private readonly cacheTtlSeconds: number;
+  public readonly reliability: ProviderReliabilityTracker;
+  private readonly routingWeights: RoutingWeights;
 
   constructor(
     private readonly sql: SQL,
-    private readonly providers: Map<string, ISwapProviderAdapter>
+    private readonly providers: Map<string, ISwapProviderAdapter>,
+    options: SwapServiceOptions = {}
   ) {
     this.revenueService = new RevenueService(sql, DEFAULT_REVENUE_CONFIG);
+    this.cache = options.cache ?? new InMemoryCache();
+    this.cacheTtlSeconds = options.cacheTtlSeconds ?? 30;
+    this.reliability = options.reliability ?? new ProviderReliabilityTracker();
+    this.routingWeights = options.routingWeights ?? DEFAULT_WEIGHTS;
   }
 
   /**
@@ -94,9 +137,34 @@ export class SwapService {
     const fromAsset = request.from_asset.toUpperCase();
     const toAsset = request.to_asset.toUpperCase();
 
+    const cacheKey = swapQuoteCacheKey({
+      fromAsset,
+      toAsset,
+      amount: request.amount,
+      fromNetwork: request.from_network,
+      toNetwork: request.to_network,
+    });
+
+    // Try cache first. The cache holds the provider-level quote results,
+    // but quote IDs (and their DB rows) are per-user, so we always refresh
+    // the user-scoped rows below.
+    const cached = await this.cache.get<ProviderQuoteSnapshot[]>(cacheKey);
+
     // Get quotes from all available providers in parallel
     const providerList = Array.from(this.providers.values());
     const quotePromises = providerList.map(async (provider) => {
+      const cachedEntry = cached?.find((c) => c.providerName === provider.name);
+      if (cachedEntry) {
+        try {
+          return await this.materializeQuote(userId, fromAsset, toAsset, request.amount, provider, cachedEntry.result);
+        } catch (err) {
+          logger.debug('Cached quote materialization failed, refetching', {
+            provider: provider.name,
+            error: String(err),
+          });
+        }
+      }
+
       try {
         const result = await provider.getQuote({
           fromAsset,
@@ -105,6 +173,7 @@ export class SwapService {
           fromNetwork: request.from_network,
           toNetwork: request.to_network,
         });
+        this.reliability.recordSuccess(provider.name);
 
         // Calculate platform fee (0.3% of amount)
         const platformFee = (parseFloat(request.amount) * DEFAULT_REVENUE_CONFIG.platformFeePercent).toFixed(8);
@@ -133,49 +202,105 @@ export class SwapService {
           max_amount: result.maxAmount,
         };
 
-        return { providerId: providerRow.id, result, quote, providerQuoteId: result.providerQuoteId };
+        return this.materializeQuote(userId, fromAsset, toAsset, request.amount, provider, result);
       } catch (err) {
+        this.reliability.recordFailure(provider.name);
         logger.warn(`Provider ${provider.name} quote failed`, { error: String(err) });
         return null;
       }
     });
 
-    const results = (await Promise.all(quotePromises)).filter(Boolean);
+    const results = (await Promise.all(quotePromises)).filter(Boolean) as MaterializedQuote[];
     if (results.length === 0) {
       throw new ValidationError(`No providers available for ${fromAsset} → ${toAsset}`);
     }
 
-    // Store quotes in DB and return full objects
-    const quotes: SwapQuote[] = [];
-    for (const r of results) {
-      if (!r) continue;
-      const quoteId = generateUUID();
-
-      // Store ephemeral quote data in DB for execute
-      await this.sql`
-        INSERT INTO swap_quotes (
-          id, provider_id, provider_quote_id, user_id,
-          from_asset, to_asset, from_amount, to_amount, rate,
-          network_fee, fee_asset, platform_fee,
-          estimated_duration_seconds, expires_at, min_amount, max_amount
-        ) VALUES (
-          ${quoteId}, ${r.providerId}, ${r.providerQuoteId}, ${userId},
-          ${fromAsset}, ${toAsset}, ${r.result.fromAmount}, ${r.result.toAmount}, ${r.result.rate},
-          ${r.result.networkFee}, ${r.result.feeAsset}, ${r.quote.platform_fee},
-          ${r.result.estimatedDurationSeconds}, ${r.result.expiresAt},
-          ${r.result.minAmount}, ${r.result.maxAmount}
-        )
-      `;
-
-      quotes.push({ id: quoteId, ...r.quote });
+    // Refresh the quote cache with the latest upstream snapshots. We cache
+    // the raw provider result, not per-user quote rows.
+    if (!cached) {
+      const snapshot: ProviderQuoteSnapshot[] = results.map((r) => ({
+        providerName: r.providerName,
+        result: r.result,
+      }));
+      await this.cache.set(cacheKey, snapshot, this.cacheTtlSeconds);
     }
 
-    // Select best quote by to_amount (most output)
-    const bestQuote = quotes.reduce((best, q) =>
-      parseFloat(q.to_amount) > parseFloat(best.to_amount) ? q : best
+    const quotes = results.map((r) => r.quote);
+
+    // Smart provider selection: prefer highest net output, factoring in
+    // durations and provider reliability. Falls back to raw to_amount when
+    // net calculation produces ties.
+    const ranked = rankCandidates(
+      quotes.map((q) => ({
+        providerName: q.provider_name,
+        toAmount: q.to_amount,
+        platformFee: q.platform_fee,
+        networkFee: q.network_fee,
+        estimatedDurationSeconds: q.estimated_duration_seconds,
+        quoteId: q.id,
+      })),
+      this.reliability,
+      this.routingWeights
     );
 
-    return { quotes, best_quote_id: bestQuote.id };
+    return { quotes, best_quote_id: ranked.best.quoteId };
+  }
+
+  /**
+   * Convert a provider's quote result into our canonical `SwapQuote`,
+   * persisting the user-scoped DB row required for `executeSwap`.
+   */
+  private async materializeQuote(
+    userId: UUID,
+    fromAsset: string,
+    toAsset: string,
+    requestAmount: string,
+    provider: ISwapProviderAdapter,
+    result: import('../shared/types/index.js').SwapQuoteResult
+  ): Promise<MaterializedQuote | null> {
+    const platformFee = (parseFloat(requestAmount) * DEFAULT_REVENUE_CONFIG.platformFeePercent).toFixed(8);
+
+    const [providerRow] = await this.sql<{ id: string }[]>`
+      SELECT id FROM providers WHERE name = ${provider.name} AND is_active = TRUE LIMIT 1
+    `;
+    if (!providerRow) return null;
+
+    const quoteId = generateUUID();
+    const quote: SwapQuote = {
+      id: quoteId,
+      provider_id: providerRow.id,
+      provider_name: provider.name,
+      from_asset: fromAsset,
+      to_asset: toAsset,
+      from_amount: result.fromAmount,
+      to_amount: result.toAmount,
+      rate: result.rate,
+      fee_amount: result.networkFee,
+      fee_asset: result.feeAsset,
+      platform_fee: platformFee,
+      network_fee: result.networkFee,
+      estimated_duration_seconds: result.estimatedDurationSeconds,
+      expires_at: result.expiresAt,
+      min_amount: result.minAmount,
+      max_amount: result.maxAmount,
+    };
+
+    await this.sql`
+      INSERT INTO swap_quotes (
+        id, provider_id, provider_quote_id, user_id,
+        from_asset, to_asset, from_amount, to_amount, rate,
+        network_fee, fee_asset, platform_fee,
+        estimated_duration_seconds, expires_at, min_amount, max_amount
+      ) VALUES (
+        ${quoteId}, ${providerRow.id}, ${result.providerQuoteId}, ${userId},
+        ${fromAsset}, ${toAsset}, ${result.fromAmount}, ${result.toAmount}, ${result.rate},
+        ${result.networkFee}, ${result.feeAsset}, ${platformFee},
+        ${result.estimatedDurationSeconds}, ${result.expiresAt},
+        ${result.minAmount}, ${result.maxAmount}
+      )
+    `;
+
+    return { providerName: provider.name, result, quote };
   }
 
   /**
@@ -216,12 +341,19 @@ export class SwapService {
       throw new ValidationError(`Provider ${quoteRow.provider_name} is not available`);
     }
 
-    // Execute with provider
-    const executeResult = await provider.executeSwap({
-      providerQuoteId: quoteRow.provider_quote_id,
-      recipientAddress: request.recipient_address,
-      refundAddress: request.refund_address,
-    });
+    // Execute with provider; record outcome for future routing decisions.
+    let executeResult;
+    try {
+      executeResult = await provider.executeSwap({
+        providerQuoteId: quoteRow.provider_quote_id,
+        recipientAddress: request.recipient_address,
+        refundAddress: request.refund_address,
+      });
+      this.reliability.recordSuccess(provider.name);
+    } catch (err) {
+      this.reliability.recordFailure(provider.name);
+      throw err;
+    }
 
     // Create transaction record
     const txId = generateUUID();

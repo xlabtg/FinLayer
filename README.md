@@ -174,6 +174,19 @@ curl -X POST http://localhost:3000/v1/auth/api-keys \
 | `POST` | `/v1/affiliate/link` | Create tracking link |
 | `GET` | `/v1/affiliate/stats` | Revenue dashboard |
 
+### Analytics Endpoints (Phase 5)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/analytics/revenue` | Cross-domain revenue dashboard (admin scope) |
+| `GET` | `/v1/analytics/affiliate` | Per-affiliate revenue dashboard (`affiliate:read`) |
+
+### Marketplace Endpoints (Phase 5)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/v1/marketplace/link` | Generate an affiliate deep-link for swap, payment, or earn (`affiliate:write`) |
+
 ---
 
 ## Architecture
@@ -237,10 +250,10 @@ Every transaction automatically tracks revenue:
 | Phase | Status | Description |
 |-------|--------|-------------|
 | Phase 1 | ✅ **Complete** | Core foundation + Swap module (ChangeNOW) |
-| Phase 2 | 🔲 Planned | Payments module (MoonPay/Transak) |
+| Phase 2 | ✅ **Complete** | Payments module (MoonPay/Transak/NowPayments) |
 | Phase 3 | 🔲 Planned | Earn/Lending module (Aave/Compound) |
 | Phase 4 | 🔲 Planned | Wallet + Key management |
-| Phase 5 | 🔲 Planned | Growth & Ecosystem |
+| Phase 5 | ✅ **Complete** | Growth & Ecosystem (smart routing, Redis cache, analytics, marketplace, agent plugin) |
 
 See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for detailed roadmap.
 

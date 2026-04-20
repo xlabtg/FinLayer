@@ -35,6 +35,14 @@
         "bun-types": "latest",
       },
     },
+    "packages/agent-plugin": {
+      "name": "@finlayer/agent-plugin",
+      "version": "0.1.0",
+      "dependencies": {
+        "@finlayer/sdk": "workspace:*",
+        "@finlayer/types": "workspace:*",
+      },
+    },
     "packages/sdk": {
       "name": "@finlayer/sdk",
       "version": "0.1.0-beta.1",
@@ -77,6 +85,8 @@
     "@fastify/swagger": ["@fastify/swagger@8.15.0", "", { "dependencies": { "fastify-plugin": "^4.0.0", "json-schema-resolver": "^2.0.0", "openapi-types": "^12.0.0", "rfdc": "^1.3.0", "yaml": "^2.2.2" } }, "sha512-zy+HEEKFqPMS2sFUsQU5X0MHplhKJvWeohBwTCkBAJA/GDYGLGUWQaETEhptiqxK7Hs0fQB9B4MDb3pbwIiCwA=="],
 
     "@fastify/swagger-ui": ["@fastify/swagger-ui@3.1.0", "", { "dependencies": { "@fastify/static": "^7.0.0", "fastify-plugin": "^4.0.0", "openapi-types": "^12.0.2", "rfdc": "^1.3.0", "yaml": "^2.2.2" } }, "sha512-68jm6k8VzvHXkEBT4Dakm/kkzUlPO4POIi0agWJSWxsYichPBqzjo+IpfqPl4pSJR1zCToQhEOo+cv+yJL2qew=="],
+
+    "@finlayer/agent-plugin": ["@finlayer/agent-plugin@workspace:packages/agent-plugin"],
 
     "@finlayer/api": ["@finlayer/api@workspace:apps/api"],
 

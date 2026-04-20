@@ -124,15 +124,30 @@ packages/sdk            ← Depends on: types (HTTP client, no server code)
 
 ---
 
-## Phase 5: Growth & Ecosystem
+## Phase 5: Growth & Ecosystem ✅ Complete
 
-| Task | SP | Risk |
-|------|----|------|
-| [ROUTING] Smart provider selection (best rate + fee) | 5 | Low |
-| [CACHE] Redis quote cache (TTL-based) | 3 | Low |
-| [ANALYTICS] Cross-domain revenue dashboard | 5 | Medium |
-| [AGENT] Hive Mind plugin integration | 5 | Medium |
-| [MARKETPLACE] Affiliate link generator | 3 | Low |
+| Task | SP | Status |
+|------|----|--------|
+| [ROUTING] Smart provider selection (best rate + fee) | 5 | ✅ Done |
+| [CACHE] Redis quote cache (TTL-based) | 3 | ✅ Done |
+| [ANALYTICS] Cross-domain revenue dashboard | 5 | ✅ Done |
+| [AGENT] Hive Mind plugin integration | 5 | ✅ Done |
+| [MARKETPLACE] Affiliate link generator | 3 | ✅ Done |
+
+**Delivered in PR #10:**
+
+- `modules/shared/routing/` — net-output scoring with weighted rate/speed/reliability,
+  `ProviderReliabilityTracker` for success-rate tracking, deterministic tie-breaking.
+- `modules/shared/cache/` — pluggable `ICacheBackend` with `InMemoryCache` and
+  `RedisCache` (lazy-loaded via dynamic import; graceful fallback to in-memory).
+- `modules/analytics/` — `GET /v1/analytics/revenue` (cross-domain) +
+  `GET /v1/analytics/affiliate` (per-affiliate) with period filters.
+- `modules/marketplace/` — `POST /v1/marketplace/link` generates affiliate deep-links
+  for swap / payment / earn flows with `ref=<code>` + UTM attribution.
+- `packages/agent-plugin/` — `@finlayer/agent-plugin` Hive Mind wrapper exposing
+  `solve({ kind: 'swap' | 'payment' | 'quote', ... })`.
+- Tests: `phase5-routing.test.ts` (15 unit tests) and `phase5-swap-service.test.ts`
+  (6 end-to-end tests covering routing + caching + reliability tracking).
 
 ---
 
