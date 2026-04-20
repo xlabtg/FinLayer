@@ -1,0 +1,377 @@
+/**
+ * E2E tests for payments flow (mock provider).
+ * Tests: create invoice → webhook processing (idempotent) → status lookup
+ *
+ * Uses mock DB and mock provider — no external dependencies.
+ */
+
+import { describe, test, expect, beforeEach } from 'bun:test';
+import { PaymentsService } from '../../../../modules/payments/service.js';
+import { MockPaymentProvider } from './mock-payment-provider.js';
+import { createMockSql, createTestUserId } from './setup.js';
+import { generateUUID } from '@finlayer/utils';
+import {
+  DuplicateIdempotencyKeyError,
+  IdempotencyError,
+  InvalidWebhookSignatureError,
+  InvoiceNotFoundError,
+  PaymentProviderUnavailableError,
+  ValidationError,
+} from '../../../../modules/shared/errors/index.js';
+import type { IPaymentProviderAdapter } from '../../../../modules/shared/types/index.js';
+import {
+  MoonPayAdapter,
+} from '../../../../modules/providers/moonpay/adapter.js';
+import {
+  TransakAdapter,
+} from '../../../../modules/providers/transak/adapter.js';
+import {
+  NowPaymentsAdapter,
+} from '../../../../modules/providers/nowpayments/adapter.js';
+
+describe('Payments Flow', () => {
+  let paymentsService: PaymentsService;
+  let mockProvider: MockPaymentProvider;
+  let userId: string;
+  let mockSql: ReturnType<typeof createMockSql>;
+
+  beforeEach(() => {
+    mockProvider = new MockPaymentProvider();
+    const providers = new Map<string, IPaymentProviderAdapter>([
+      [mockProvider.name, mockProvider],
+    ]);
+    mockSql = createMockSql();
+    paymentsService = new PaymentsService(mockSql as never, providers, 'http://test.local');
+    userId = createTestUserId();
+  });
+
+  describe('POST /v1/payments/invoice', () => {
+    test('creates an invoice and persists it', async () => {
+      const invoice = await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: `inv-${generateUUID()}`,
+      });
+
+      expect(invoice.id).toBeDefined();
+      expect(invoice.transaction_id).toBeDefined();
+      expect(invoice.status).toBe('pending');
+      expect(invoice.payment_address).toBeDefined();
+      expect(invoice.payment_address.length).toBeGreaterThan(0);
+      expect(invoice.asset).toBe('USDC');
+      expect(invoice.amount).toBe('100');
+      expect(invoice.webhook_url).toContain('/v1/payments/webhook/');
+      expect(new Date(invoice.expires_at).getTime()).toBeGreaterThan(Date.now());
+
+      // Check persistence
+      const invoices = mockSql._tables.get('invoices') ?? [];
+      expect(invoices.length).toBe(1);
+
+      const txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs.length).toBe(1);
+      expect(txs[0]!['type']).toBe('payment');
+      expect(txs[0]!['domain']).toBe('payments');
+    });
+
+    test('throws IdempotencyError when idempotency_key is missing', async () => {
+      await expect(
+        paymentsService.createInvoice(userId, {
+          asset: 'USDC',
+          amount: '100',
+          idempotency_key: '',
+        })
+      ).rejects.toBeInstanceOf(IdempotencyError);
+    });
+
+    test('throws DuplicateIdempotencyKeyError on reuse', async () => {
+      const key = `inv-${generateUUID()}`;
+      await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: key,
+      });
+
+      await expect(
+        paymentsService.createInvoice(userId, {
+          asset: 'USDC',
+          amount: '200',
+          idempotency_key: key,
+        })
+      ).rejects.toBeInstanceOf(DuplicateIdempotencyKeyError);
+    });
+
+    test('throws ValidationError for invalid amount', async () => {
+      await expect(
+        paymentsService.createInvoice(userId, {
+          asset: 'USDC',
+          amount: '-10',
+          idempotency_key: generateUUID(),
+        })
+      ).rejects.toBeInstanceOf(ValidationError);
+    });
+
+    test('throws PaymentProviderUnavailableError when no providers configured', async () => {
+      const emptyService = new PaymentsService(
+        mockSql as never,
+        new Map<string, IPaymentProviderAdapter>(),
+        'http://test.local'
+      );
+      await expect(
+        emptyService.createInvoice(userId, {
+          asset: 'USDC',
+          amount: '100',
+          idempotency_key: generateUUID(),
+        })
+      ).rejects.toBeInstanceOf(PaymentProviderUnavailableError);
+    });
+  });
+
+  describe('GET /v1/payments/invoice/:id', () => {
+    test('returns invoice for owning user', async () => {
+      const created = await paymentsService.createInvoice(userId, {
+        asset: 'BTC',
+        amount: '0.01',
+        idempotency_key: generateUUID(),
+      });
+
+      const fetched = await paymentsService.getInvoice(created.id, userId);
+      expect(fetched.id).toBe(created.id);
+      expect(fetched.asset).toBe('BTC');
+    });
+
+    test('throws InvoiceNotFoundError for unknown id', async () => {
+      await expect(
+        paymentsService.getInvoice(generateUUID(), userId)
+      ).rejects.toBeInstanceOf(InvoiceNotFoundError);
+    });
+  });
+
+  describe('POST /v1/payments/webhook/:provider', () => {
+    test('updates invoice status to paid and emits revenue_event', async () => {
+      const invoice = await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: generateUUID(),
+      });
+
+      // Extract the provider invoice id from the mock provider state.
+      const providerInvoiceIds = [...mockProvider.invoices.keys()];
+      expect(providerInvoiceIds.length).toBe(1);
+      const providerInvoiceId = providerInvoiceIds[0]!;
+
+      const payload = {
+        event_id: `evt-${generateUUID()}`,
+        invoice_id: providerInvoiceId,
+        status: 'paid' as const,
+        paid_amount: '100',
+        tx_hash: '0xabcd',
+      };
+
+      const res = await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: JSON.stringify(payload),
+        headers: {},
+      });
+
+      expect(res.processed).toBe(true);
+      expect(res.duplicate).toBe(false);
+      expect(res.invoiceId).toBe(invoice.id);
+      expect(res.status).toBe('paid');
+
+      // Invoice updated
+      const refreshed = await paymentsService.getInvoice(invoice.id, userId);
+      expect(refreshed.status).toBe('paid');
+      expect(refreshed.paid_amount).toBe('100');
+      expect(refreshed.tx_hash).toBe('0xabcd');
+
+      // Transaction updated
+      const txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs[0]!['status']).toBe('completed');
+
+      // Revenue event created
+      const revenueEvents = mockSql._tables.get('revenue_events') ?? [];
+      expect(revenueEvents.length).toBe(1);
+      expect(revenueEvents[0]!['source_domain']).toBe('payments');
+    });
+
+    test('is idempotent: duplicate event ids are no-ops', async () => {
+      const invoice = await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '50',
+        idempotency_key: generateUUID(),
+      });
+
+      const providerInvoiceId = [...mockProvider.invoices.keys()][0]!;
+      const eventId = `evt-${generateUUID()}`;
+
+      const body = JSON.stringify({
+        event_id: eventId,
+        invoice_id: providerInvoiceId,
+        status: 'paid',
+        paid_amount: '50',
+      });
+
+      const first = await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: body,
+        headers: {},
+      });
+      expect(first.processed).toBe(true);
+      expect(first.duplicate).toBe(false);
+
+      const second = await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: body,
+        headers: {},
+      });
+      expect(second.processed).toBe(false);
+      expect(second.duplicate).toBe(true);
+
+      // Only one revenue event despite two deliveries
+      const revenueEvents = mockSql._tables.get('revenue_events') ?? [];
+      expect(revenueEvents.length).toBe(1);
+
+      // Only one webhook row recorded
+      const events = mockSql._tables.get('payment_webhook_events') ?? [];
+      expect(events.length).toBe(1);
+      expect(events[0]!['processed']).toBe(true);
+      void invoice;
+    });
+
+    test('rejects webhook with invalid signature', async () => {
+      mockProvider.forceInvalidSignature = true;
+      await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '25',
+        idempotency_key: generateUUID(),
+      });
+
+      const providerInvoiceId = [...mockProvider.invoices.keys()][0]!;
+
+      await expect(
+        paymentsService.handleWebhook({
+          providerName: mockProvider.name,
+          rawBody: JSON.stringify({
+            event_id: 'evt-1',
+            invoice_id: providerInvoiceId,
+            status: 'paid',
+          }),
+          headers: {},
+        })
+      ).rejects.toBeInstanceOf(InvalidWebhookSignatureError);
+    });
+
+    test('rejects unknown provider', async () => {
+      await expect(
+        paymentsService.handleWebhook({
+          providerName: 'DoesNotExist',
+          rawBody: '{}',
+          headers: {},
+        })
+      ).rejects.toBeInstanceOf(PaymentProviderUnavailableError);
+    });
+
+    test('rejects malformed payload', async () => {
+      await expect(
+        paymentsService.handleWebhook({
+          providerName: mockProvider.name,
+          rawBody: 'not-json',
+          headers: {},
+        })
+      ).rejects.toBeInstanceOf(ValidationError);
+    });
+  });
+});
+
+describe('Provider webhook signature verification', () => {
+  test('MoonPay: verifies HMAC-SHA256 signature', () => {
+    const secret = 'test_moonpay_secret';
+    const adapter = new MoonPayAdapter('test-api-key', secret);
+
+    const body = JSON.stringify({
+      type: 'transaction_updated',
+      data: { id: 'mp_tx_123', status: 'completed', quoteCurrencyAmount: 10, updatedAt: '2026-01-01T00:00:00Z' },
+    });
+
+    const crypto = require('crypto');
+    const sig = crypto.createHmac('sha256', secret).update(body).digest('hex');
+
+    const result = adapter.verifyWebhook({ rawBody: body, headers: { 'moonpay-signature-v2': sig } });
+    expect(result).not.toBeNull();
+    expect(result!.signatureValid).toBe(true);
+    expect(result!.providerInvoiceId).toBe('mp_tx_123');
+    expect(result!.status).toBe('paid');
+  });
+
+  test('MoonPay: flags invalid signature', () => {
+    const adapter = new MoonPayAdapter('test-api-key', 'test_secret');
+    const body = JSON.stringify({ type: 'transaction_updated', data: { id: 'mp_tx_999', status: 'pending' } });
+    const result = adapter.verifyWebhook({ rawBody: body, headers: { 'moonpay-signature-v2': 'bogus' } });
+    expect(result).not.toBeNull();
+    expect(result!.signatureValid).toBe(false);
+  });
+
+  test('Transak: verifies HMAC-SHA256 signature', () => {
+    const secret = 'test_transak_secret';
+    const adapter = new TransakAdapter('test-api-key', secret);
+
+    const body = JSON.stringify({
+      eventID: 'tk_evt_1',
+      eventName: 'ORDER_COMPLETED',
+      webhookData: { id: 'tk_order_1', status: 'COMPLETED', cryptoAmount: 5, transactionHash: '0xdead', updatedAt: '2026-01-01T00:00:00Z' },
+    });
+
+    const crypto = require('crypto');
+    const sig = crypto.createHmac('sha256', secret).update(body).digest('hex');
+
+    const result = adapter.verifyWebhook({ rawBody: body, headers: { 'x-transak-signature': sig } });
+    expect(result).not.toBeNull();
+    expect(result!.signatureValid).toBe(true);
+    expect(result!.providerInvoiceId).toBe('tk_order_1');
+    expect(result!.status).toBe('paid');
+  });
+
+  test('NowPayments: verifies HMAC-SHA512 signature over canonical JSON', () => {
+    const secret = 'test_nowpayments_secret';
+    const adapter = new NowPaymentsAdapter('test-api-key', secret);
+
+    const payload = {
+      payment_id: 12345,
+      payment_status: 'finished' as const,
+      pay_address: 'bc1qtest',
+      pay_amount: 0.001,
+      pay_currency: 'btc',
+      price_amount: 65,
+      price_currency: 'usd',
+      actually_paid: 0.001,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:05:00Z',
+      txid: '0xfeed',
+    };
+
+    const body = JSON.stringify(payload);
+    // Canonical (sorted keys) form for signing:
+    const canonical = JSON.stringify(
+      Object.keys(payload).sort().reduce<Record<string, unknown>>((acc, k) => {
+        acc[k] = (payload as Record<string, unknown>)[k];
+        return acc;
+      }, {})
+    );
+    const crypto = require('crypto');
+    const sig = crypto.createHmac('sha512', secret).update(canonical).digest('hex');
+
+    const result = adapter.verifyWebhook({ rawBody: body, headers: { 'x-nowpayments-sig': sig } });
+    expect(result).not.toBeNull();
+    expect(result!.signatureValid).toBe(true);
+    expect(result!.providerInvoiceId).toBe('12345');
+    expect(result!.status).toBe('paid');
+  });
+
+  test('NowPayments: rejects forged signature', () => {
+    const adapter = new NowPaymentsAdapter('test-api-key', 'real_secret');
+    const body = JSON.stringify({ payment_id: 1, payment_status: 'finished', updated_at: '2026-01-01T00:00:00Z' });
+    const result = adapter.verifyWebhook({ rawBody: body, headers: { 'x-nowpayments-sig': 'forged' } });
+    expect(result).not.toBeNull();
+    expect(result!.signatureValid).toBe(false);
+  });
+});
