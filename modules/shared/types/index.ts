@@ -37,9 +37,20 @@ export interface IPaymentProviderAdapter extends IProviderAdapter {
 export interface IEarnProviderAdapter extends IProviderAdapter {
   readonly domain: 'earn';
 
+  /** List available yield strategies for this provider (with latest APY). */
   getStrategies(): Promise<EarnStrategyResult[]>;
+
+  /** Look up a single strategy (used to validate min deposit, asset, etc). */
+  getStrategy(providerStrategyId: string): Promise<EarnStrategyResult | null>;
+
+  /** Initiate a deposit into a strategy. Returns the deposit address/tx info. */
   deposit(params: EarnDepositParams): Promise<EarnDepositResult>;
+
+  /** Initiate a withdrawal from a position. */
   withdraw(params: EarnWithdrawParams): Promise<EarnWithdrawResult>;
+
+  /** Query the current value & earned yield for a position. */
+  getPosition(providerPositionId: string): Promise<EarnPositionResult>;
 }
 
 // ─── Swap Adapter Types ────────────────────────────────────────────────────────
@@ -147,6 +158,18 @@ export interface EarnWithdrawParams {
 export interface EarnWithdrawResult {
   txHash: string;
   status: TransactionStatus;
+  withdrawnAmount?: Numeric;
+}
+
+export interface EarnPositionResult {
+  providerPositionId: string;
+  status: 'pending' | 'active' | 'withdrawn';
+  depositedAmount: Numeric;
+  currentValue: Numeric;
+  earnedYield: Numeric;
+  asset: string;
+  network: string;
+  unlocksAt?: ISO8601;
 }
 
 // ─── Request Context ──────────────────────────────────────────────────────────

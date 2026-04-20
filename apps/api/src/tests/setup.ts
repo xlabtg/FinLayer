@@ -30,6 +30,14 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
     is_active: true,
     priority: 100,
   });
+  initTable('providers').push({
+    id: generateUUID(),
+    name: 'MockEarnProvider',
+    domain: 'earn',
+    config: {},
+    is_active: true,
+    priority: 100,
+  });
 
   // Create a simple SQL mock
   const mockSql = new Proxy(
@@ -105,28 +113,127 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return Promise.resolve([]);
       }
 
+      if (query.startsWith('SELECT') && query.includes('FROM PROVIDERS') && query.includes("DOMAIN = 'EARN'")) {
+        // Two variants: list-by-domain, and single provider by id.
+        if (query.includes('WHERE ID = ')) {
+          const providerId = values[0];
+          const rows = initTable('providers').filter(
+            (r) => r['id'] === providerId && r['domain'] === 'earn' && r['is_active'] === true
+          );
+          return Promise.resolve(rows);
+        }
+        const rows = initTable('providers').filter(
+          (r) => r['domain'] === 'earn' && r['is_active'] === true
+        );
+        return Promise.resolve(rows);
+      }
+
       if (query.startsWith('SELECT') && query.includes('FROM PROVIDERS')) {
         const rows = initTable('providers').filter(r => r['is_active'] === true);
         return Promise.resolve(rows);
       }
 
-      if (query.startsWith('INSERT INTO TRANSACTIONS')) {
+      // ─── Earn Positions ─────────────────────────────────────────────────────
+      if (query.startsWith('INSERT INTO EARN_POSITIONS')) {
         const row: MockRow = {
           id: values[0],
-          type: values[1],
-          domain: values[2],
-          status: values[3],
-          user_id: values[4],
-          from_asset: values[5],
-          to_asset: values[6],
-          amount: values[7],
-          provider_id: values[8],
-          provider_tx_id: values[9],
-          idempotency_key: values[10],
-          affiliate_id: values[11],
-          metadata: typeof values[12] === 'string' ? JSON.parse(values[12]) : values[12],
-          created_at: new Date(values[13] as string),
-          updated_at: new Date(values[14] as string),
+          user_id: values[1],
+          provider_id: values[2],
+          provider_strategy_id: values[3],
+          provider_position_id: values[4],
+          asset: values[5],
+          network: values[6],
+          deposited_amount: values[7],
+          current_value: values[8],
+          earned_yield: values[9],
+          status: 'pending',
+          deposit_tx_hash: null,
+          deposit_transaction_id: values[10],
+          unlocks_at: values[11] ? new Date(values[11] as string) : null,
+          created_at: new Date(values[12] as string),
+          updated_at: new Date(values[13] as string),
+        };
+        initTable('earn_positions').push(row);
+        return Promise.resolve([row]);
+      }
+
+      if (query.startsWith('UPDATE EARN_POSITIONS') && query.includes("STATUS = 'WITHDRAWN'")) {
+        const positionId = values[0];
+        const rows = initTable('earn_positions');
+        const row = rows.find(r => r['id'] === positionId);
+        if (row) {
+          row['status'] = 'withdrawn';
+          row['updated_at'] = new Date();
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('UPDATE EARN_POSITIONS')) {
+        const currentValue = values[0];
+        const earnedYield = values[1];
+        const status = values[2];
+        const positionId = values[3];
+        const rows = initTable('earn_positions');
+        const row = rows.find(r => r['id'] === positionId);
+        if (row) {
+          row['current_value'] = currentValue;
+          row['earned_yield'] = earnedYield;
+          row['status'] = status;
+          row['updated_at'] = new Date();
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('SELECT') && query.includes('FROM EARN_POSITIONS')) {
+        // Two variants: by-id + user, or by user only.
+        const providers = initTable('providers');
+        if (query.includes('WHERE EP.ID = ')) {
+          const positionId = values[0];
+          const userId = values[1];
+          const rows = initTable('earn_positions').filter(
+            (r) => r['id'] === positionId && r['user_id'] === userId
+          );
+          return Promise.resolve(
+            rows.map((r) => {
+              const provider = providers.find((p) => p['id'] === r['provider_id']);
+              return { ...r, provider_name: provider?.['name'] ?? 'Unknown' };
+            })
+          );
+        }
+        const userId = values[0];
+        const rows = initTable('earn_positions').filter((r) => r['user_id'] === userId);
+        return Promise.resolve(
+          rows.map((r) => {
+            const provider = providers.find((p) => p['id'] === r['provider_id']);
+            return { ...r, provider_name: provider?.['name'] ?? 'Unknown' };
+          })
+        );
+      }
+
+      if (query.startsWith('INSERT INTO TRANSACTIONS')) {
+        // The service's INSERT uses literal values ('swap', 'earn_deposit', etc.)
+        // for `type` and `domain`, so those aren't in `values`. Extract them
+        // from the query text instead.
+        const typeMatch = query.match(/VALUES\s*\(\s*\?\s*,\s*'([A-Z_]+)'\s*,\s*'([A-Z_]+)'/);
+        const type = typeMatch ? typeMatch[1]!.toLowerCase() : 'unknown';
+        const domain = typeMatch ? typeMatch[2]!.toLowerCase() : 'unknown';
+        const rawMetadata = values[10];
+        const row: MockRow = {
+          id: values[0],
+          type,
+          domain,
+          status: values[1],
+          user_id: values[2],
+          from_asset: values[3],
+          to_asset: values[4],
+          amount: values[5],
+          provider_id: values[6],
+          provider_tx_id: values[7],
+          idempotency_key: values[8],
+          affiliate_id: values[9],
+          metadata: typeof rawMetadata === 'string' ? JSON.parse(rawMetadata) : rawMetadata,
+          created_at: new Date(values[11] as string),
+          updated_at: new Date(values[12] as string),
           revenue_event_id: null,
         };
         initTable('transactions').push(row);
