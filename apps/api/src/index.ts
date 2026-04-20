@@ -16,6 +16,7 @@ import { authRoutes } from '../../../modules/auth/routes.js';
 import { swapRoutes } from '../../../modules/swap/routes.js';
 import { earnRoutes } from '../../../modules/earn/routes.js';
 import { affiliateRoutes } from '../../../modules/affiliate/routes.js';
+import { paymentsRoutes } from '../../../modules/payments/routes.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
@@ -136,6 +137,22 @@ Authorization: Bearer fl_live_<your-key>
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin);
 
+  // Capture raw JSON body so payment webhook routes can verify provider
+  // HMAC signatures against the exact bytes delivered.
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (req, body: string, done) => {
+      (req as unknown as { rawBody: string }).rawBody = body;
+      try {
+        const json = body.length > 0 ? JSON.parse(body) : {};
+        done(null, json);
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    }
+  );
+
   // ─── Health Check ──────────────────────────────────────────────────────────
 
   app.get('/health', {
@@ -164,9 +181,9 @@ Authorization: Bearer fl_live_<your-key>
   app.register(async (v1) => {
     v1.register(authRoutes, { prefix: '/auth' });
     v1.register(swapRoutes, { prefix: '/swap' });
+    v1.register(paymentsRoutes, { prefix: '/payments' });
     v1.register(earnRoutes, { prefix: '/earn' });
     v1.register(affiliateRoutes, { prefix: '/affiliate' });
-    // Phase 2-4 modules will be registered here
   }, { prefix: `/${API_VERSION}` });
 
   // Affiliate redirect routes (outside /v1/ prefix)

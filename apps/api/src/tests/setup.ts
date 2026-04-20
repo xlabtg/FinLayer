@@ -39,6 +39,16 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
     priority: 100,
   });
 
+  // Seed a payments provider
+  initTable('providers').push({
+    id: generateUUID(),
+    name: 'MockPayments',
+    domain: 'payments',
+    config: {},
+    is_active: true,
+    priority: 100,
+  });
+
   // Create a simple SQL mock
   const mockSql = new Proxy(
     function (strings: TemplateStringsArray, ...values: unknown[]) {
@@ -211,31 +221,79 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('INSERT INTO TRANSACTIONS')) {
-        // The service's INSERT uses literal values ('swap', 'earn_deposit', etc.)
-        // for `type` and `domain`, so those aren't in `values`. Extract them
-        // from the query text instead.
-        const typeMatch = query.match(/VALUES\s*\(\s*\?\s*,\s*'([A-Z_]+)'\s*,\s*'([A-Z_]+)'/);
-        const type = typeMatch ? typeMatch[1]!.toLowerCase() : 'unknown';
-        const domain = typeMatch ? typeMatch[2]!.toLowerCase() : 'unknown';
-        const rawMetadata = values[10];
-        const row: MockRow = {
-          id: values[0],
-          type,
-          domain,
-          status: values[1],
-          user_id: values[2],
-          from_asset: values[3],
-          to_asset: values[4],
-          amount: values[5],
-          provider_id: values[6],
-          provider_tx_id: values[7],
-          idempotency_key: values[8],
-          affiliate_id: values[9],
-          metadata: typeof rawMetadata === 'string' ? JSON.parse(rawMetadata) : rawMetadata,
-          created_at: new Date(values[11] as string),
-          updated_at: new Date(values[12] as string),
-          revenue_event_id: null,
-        };
+        // Transaction INSERTs have different value layouts for swap vs payment vs earn
+        // because `type`/`domain`/`status` may be template literals or bound values.
+        const isPayment = query.includes("'PAYMENT'") && query.includes("'PAYMENTS'");
+        const isEarn = query.includes("'EARN_DEPOSIT'") || query.includes("'EARN_WITHDRAW'");
+        let row: MockRow;
+        if (isPayment) {
+          // [id, userId, asset, null, amount, fee, asset, providerId, providerTxId, idem, affId, meta, now, now]
+          row = {
+            id: values[0],
+            type: 'payment',
+            domain: 'payments',
+            status: 'pending',
+            user_id: values[1],
+            from_asset: values[2],
+            to_asset: values[3],
+            amount: values[4],
+            fee_amount: values[5],
+            fee_asset: values[6],
+            provider_id: values[7],
+            provider_tx_id: values[8],
+            idempotency_key: values[9],
+            affiliate_id: values[10],
+            metadata: typeof values[11] === 'string' ? JSON.parse(values[11] as string) : values[11],
+            created_at: new Date(values[12] as string),
+            updated_at: new Date(values[13] as string),
+            revenue_event_id: null,
+            result_amount: null,
+          };
+        } else if (isEarn) {
+          // earn layout: type/domain are SQL literals; [id, status, userId, from, to, amount, providerId, providerTxId, idem, affId, meta, now, now]
+          const typeMatch = query.match(/VALUES\s*\(\s*\?\s*,\s*'([A-Z_]+)'\s*,\s*'([A-Z_]+)'/);
+          const type = typeMatch ? typeMatch[1]!.toLowerCase() : 'earn_deposit';
+          const domain = typeMatch ? typeMatch[2]!.toLowerCase() : 'earn';
+          const rawMetadata = values[10];
+          row = {
+            id: values[0],
+            type,
+            domain,
+            status: values[1],
+            user_id: values[2],
+            from_asset: values[3],
+            to_asset: values[4],
+            amount: values[5],
+            provider_id: values[6],
+            provider_tx_id: values[7],
+            idempotency_key: values[8],
+            affiliate_id: values[9],
+            metadata: typeof rawMetadata === 'string' ? JSON.parse(rawMetadata) : rawMetadata,
+            created_at: new Date(values[11] as string),
+            updated_at: new Date(values[12] as string),
+            revenue_event_id: null,
+          };
+        } else {
+          // swap layout: [id, status, userId, from, to, amount, providerId, providerTxId, idem, affId, meta, now, now]
+          row = {
+            id: values[0],
+            type: 'swap',
+            domain: 'swap',
+            status: values[1],
+            user_id: values[2],
+            from_asset: values[3],
+            to_asset: values[4],
+            amount: values[5],
+            provider_id: values[6],
+            provider_tx_id: values[7],
+            idempotency_key: values[8],
+            affiliate_id: values[9],
+            metadata: typeof values[10] === 'string' ? JSON.parse(values[10] as string) : values[10],
+            created_at: new Date(values[11] as string),
+            updated_at: new Date(values[12] as string),
+            revenue_event_id: null,
+          };
+        }
         initTable('transactions').push(row);
         return Promise.resolve([row]);
       }
@@ -273,12 +331,20 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('UPDATE TRANSACTIONS') && query.includes('STATUS')) {
+        // Two shapes:
+        //   swap:    SET status = ?, updated_at = NOW() WHERE id = ?         → [status, txId]
+        //   payment: SET status = ?, result_amount = COALESCE(?, …), updated_at = NOW() WHERE id = ? → [status, paidAmount, txId]
+        const hasResultAmount = query.includes('RESULT_AMOUNT');
         const status = values[0];
-        const txId = values[1];
+        const resultAmount = hasResultAmount ? values[1] : undefined;
+        const txId = hasResultAmount ? values[2] : values[1];
         const rows = initTable('transactions');
         const row = rows.find(r => r['id'] === txId);
         if (row) {
           row['status'] = status;
+          if (hasResultAmount && resultAmount !== null && resultAmount !== undefined) {
+            row['result_amount'] = resultAmount;
+          }
           row['updated_at'] = new Date();
         }
         return Promise.resolve([]);
@@ -286,6 +352,11 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
 
       if (query.startsWith('SELECT') && query.includes('FROM TRANSACTIONS')) {
         const txId = values[0];
+        // Single-arg SELECT (WHERE id = ?) — used for revenue event emission
+        if (values.length === 1) {
+          const rows = initTable('transactions').filter(r => r['id'] === txId);
+          return Promise.resolve(rows);
+        }
         const userId = values[1];
         const rows = initTable('transactions').filter(r =>
           r['id'] === txId && r['user_id'] === userId
@@ -305,6 +376,128 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('UPDATE AFFILIATES')) {
+        return Promise.resolve([]);
+      }
+
+      // ─── Payments ──────────────────────────────────────────────────────────
+
+      if (query.startsWith('INSERT INTO INVOICES')) {
+        // `status` is a SQL literal in the service — not a bound value.
+        // [id, txId, userId, providerId, providerInvoiceId, asset, amount, network,
+        //  paymentAddress, description, callbackUrl, expiresAt, metadata, now, now]
+        const row: MockRow = {
+          id: values[0],
+          transaction_id: values[1],
+          user_id: values[2],
+          provider_id: values[3],
+          provider_invoice_id: values[4],
+          asset: values[5],
+          amount: values[6],
+          network: values[7],
+          payment_address: values[8],
+          description: values[9],
+          callback_url: values[10],
+          status: 'pending',
+          expires_at: new Date(values[11] as string),
+          metadata: typeof values[12] === 'string' ? JSON.parse(values[12] as string) : values[12],
+          created_at: new Date(values[13] as string),
+          updated_at: new Date(values[14] as string),
+          paid_amount: null,
+          tx_hash: null,
+          paid_at: null,
+        };
+        initTable('invoices').push(row);
+        return Promise.resolve([row]);
+      }
+
+      if (query.startsWith('SELECT') && query.includes('FROM INVOICES')) {
+        const invoices = initTable('invoices');
+        const providers = initTable('providers');
+        const transactions = initTable('transactions');
+
+        // By (provider_id, provider_invoice_id)
+        if (query.includes('PROVIDER_ID =') && query.includes('PROVIDER_INVOICE_ID =')) {
+          const rows = invoices.filter(r =>
+            r['provider_id'] === values[0] && r['provider_invoice_id'] === values[1]
+          );
+          return Promise.resolve(rows);
+        }
+        // By id + user_id
+        if (query.includes('I.ID =') || query.includes('I.USER_ID =')) {
+          const rows = invoices
+            .filter(r => r['id'] === values[0] && r['user_id'] === values[1])
+            .map(r => {
+              const provider = providers.find(p => p['id'] === r['provider_id']);
+              const tx = transactions.find(t => t['id'] === r['transaction_id']);
+              return {
+                ...r,
+                provider_name: provider?.['name'] ?? 'MockPayments',
+                affiliate_id: tx?.['affiliate_id'] ?? null,
+                revenue_event_id: tx?.['revenue_event_id'] ?? null,
+              };
+            });
+          return Promise.resolve(rows);
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('UPDATE INVOICES')) {
+        const rows = initTable('invoices');
+        // Last value is the id
+        const id = values[values.length - 1];
+        const row = rows.find(r => r['id'] === id);
+        if (row) {
+          // status, paid_amount, tx_hash, paid_at
+          if (values[0] !== undefined) row['status'] = values[0];
+          if (values[1] !== undefined && values[1] !== null) row['paid_amount'] = values[1];
+          if (values[2] !== undefined && values[2] !== null) row['tx_hash'] = values[2];
+          if (values[3] !== undefined && values[3] !== null) {
+            row['paid_at'] = typeof values[3] === 'string' ? new Date(values[3]) : values[3];
+          }
+          row['updated_at'] = new Date();
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('INSERT INTO PAYMENT_WEBHOOK_EVENTS')) {
+        const providerId = values[1];
+        const providerEventId = values[2];
+        const table = initTable('payment_webhook_events');
+        // Idempotency via UNIQUE (provider_id, provider_event_id)
+        if (table.some(r => r['provider_id'] === providerId && r['provider_event_id'] === providerEventId)) {
+          return Promise.resolve([]);
+        }
+        const id = values[0] as string;
+        const row: MockRow = {
+          id,
+          provider_id: providerId,
+          provider_event_id: providerEventId,
+          provider_invoice_id: values[3],
+          invoice_id: values[4],
+          event_type: values[5],
+          signature_valid: values[6],
+          payload: values[7],
+          processed: values[8] ?? false,
+          received_at: new Date(),
+          processed_at: null,
+          error: null,
+        };
+        table.push(row);
+        // If RETURNING id, the caller expects [{id}]
+        if (query.includes('RETURNING ID')) {
+          return Promise.resolve([{ id }]);
+        }
+        return Promise.resolve([row]);
+      }
+
+      if (query.startsWith('UPDATE PAYMENT_WEBHOOK_EVENTS')) {
+        const id = values[values.length - 1];
+        const row = initTable('payment_webhook_events').find(r => r['id'] === id);
+        if (row) {
+          row['processed'] = true;
+          row['processed_at'] = new Date();
+          if (query.includes('ERROR =')) row['error'] = values[0];
+        }
         return Promise.resolve([]);
       }
 

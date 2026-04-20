@@ -154,6 +154,57 @@ export class InsufficientLiquidityError extends FinLayerError {
   }
 }
 
+// ─── Payment Errors ───────────────────────────────────────────────────────────
+
+export class InvoiceNotFoundError extends FinLayerError {
+  constructor(invoiceId: string) {
+    super('INVOICE_NOT_FOUND', `Invoice ${invoiceId} not found`, 'payments', 404, {
+      suggestion: 'Verify the invoice id',
+    });
+  }
+}
+
+export class InvoiceExpiredError extends FinLayerError {
+  constructor() {
+    super('INVOICE_EXPIRED', 'Invoice has expired', 'payments', 410, {
+      retryable: true,
+      suggestion: 'Create a new invoice via POST /v1/payments/invoice',
+    });
+  }
+}
+
+export class PaymentProviderUnavailableError extends FinLayerError {
+  constructor(providerName?: string) {
+    super(
+      'PAYMENT_PROVIDER_UNAVAILABLE',
+      providerName
+        ? `Payment provider ${providerName} is not available`
+        : 'No payment providers are configured',
+      'payments',
+      503,
+      {
+        retryable: true,
+        retry_after_ms: 5000,
+        suggestion: 'Configure a payment provider API key or retry later',
+      }
+    );
+  }
+}
+
+export class InvalidWebhookSignatureError extends FinLayerError {
+  constructor(providerName: string) {
+    super(
+      'INVALID_WEBHOOK_SIGNATURE',
+      `${providerName} webhook signature is invalid`,
+      'payments',
+      401,
+      {
+        suggestion: 'Verify the shared secret configured for this provider',
+      }
+    );
+  }
+}
+
 // ─── Earn Errors ──────────────────────────────────────────────────────────────
 
 export class EarnStrategyNotFoundError extends FinLayerError {

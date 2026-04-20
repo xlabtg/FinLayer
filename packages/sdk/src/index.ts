@@ -32,6 +32,7 @@ export { FinLayerClient, FinLayerApiError } from './client.js';
 export type { FinLayerClientConfig } from './client.js';
 
 export { SwapModule } from './modules/swap.js';
+export { PaymentsModule } from './modules/payments.js';
 export { EarnModule } from './modules/earn.js';
 
 // Re-export all types for convenience
@@ -40,6 +41,7 @@ export type * from '@finlayer/types';
 import { FinLayerClient } from './client.js';
 import type { FinLayerClientConfig } from './client.js';
 import { SwapModule } from './modules/swap.js';
+import { PaymentsModule } from './modules/payments.js';
 import { EarnModule } from './modules/earn.js';
 
 /**
@@ -67,10 +69,13 @@ export class HiveFinance extends FinLayerClient {
   public readonly swap: SwapModule;
   /** Yield strategy aggregation (Aave V3, Compound V3, …) */
   public readonly earn: EarnModule;
+  /** Fiat on-ramp and crypto invoices */
+  public readonly payments: PaymentsModule;
 
   constructor(config: FinLayerClientConfig) {
     super(config);
     this.swap = new SwapModule(this);
+    this.payments = new PaymentsModule(this);
     this.earn = new EarnModule(this);
   }
 }
