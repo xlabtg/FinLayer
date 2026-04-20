@@ -32,6 +32,11 @@ export interface IPaymentProviderAdapter extends IProviderAdapter {
 
   createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult>;
   getInvoiceStatus(providerInvoiceId: string): Promise<InvoiceStatusResult>;
+  /**
+   * Verify a webhook signature and parse the event.
+   * Returns a normalized event or `null` if the signature is invalid.
+   */
+  verifyWebhook(params: WebhookVerifyParams): WebhookVerifyResult | null;
 }
 
 export interface IEarnProviderAdapter extends IProviderAdapter {
@@ -109,6 +114,28 @@ export interface InvoiceStatusResult {
   paidAmount?: Numeric;
   txHash?: string;
   paidAt?: ISO8601;
+}
+
+// ─── Webhook types ────────────────────────────────────────────────────────────
+
+export interface WebhookVerifyParams {
+  rawBody: string;
+  headers: Record<string, string | string[] | undefined>;
+  /** Shared secret the provider uses to sign webhook deliveries. */
+  secret?: string;
+}
+
+export interface WebhookVerifyResult {
+  /** Provider-specific event id — used to deduplicate replayed deliveries. */
+  providerEventId: string;
+  providerInvoiceId: string;
+  eventType: string;
+  status: InvoiceStatusResult['status'];
+  paidAmount?: Numeric;
+  txHash?: string;
+  paidAt?: ISO8601;
+  /** True when the provider's signature header matched our shared secret. */
+  signatureValid: boolean;
 }
 
 // ─── Earn Adapter Types ───────────────────────────────────────────────────────

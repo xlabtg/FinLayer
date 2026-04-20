@@ -32,6 +32,7 @@ export { FinLayerClient, FinLayerApiError } from './client.js';
 export type { FinLayerClientConfig } from './client.js';
 
 export { SwapModule } from './modules/swap.js';
+export { PaymentsModule } from './modules/payments.js';
 
 // Re-export all types for convenience
 export type * from '@finlayer/types';
@@ -39,6 +40,7 @@ export type * from '@finlayer/types';
 import { FinLayerClient } from './client.js';
 import type { FinLayerClientConfig } from './client.js';
 import { SwapModule } from './modules/swap.js';
+import { PaymentsModule } from './modules/payments.js';
 
 /**
  * Main FinLayer SDK client.
@@ -63,10 +65,13 @@ import { SwapModule } from './modules/swap.js';
 export class HiveFinance extends FinLayerClient {
   /** Crypto exchange aggregation */
   public readonly swap: SwapModule;
+  /** Fiat on-ramp and crypto invoices */
+  public readonly payments: PaymentsModule;
 
   constructor(config: FinLayerClientConfig) {
     super(config);
     this.swap = new SwapModule(this);
+    this.payments = new PaymentsModule(this);
   }
 }
 
