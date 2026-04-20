@@ -167,6 +167,29 @@ curl -X POST http://localhost:3000/v1/auth/api-keys \
 | `POST` | `/v1/swap/execute` | Execute a swap (requires `swap:write`) |
 | `GET` | `/v1/swap/tx/:id` | Get transaction status |
 
+### Earn Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/v1/earn/strategies` | List yield strategies (Aave V3, Compound V3) |
+| `POST` | `/v1/earn/deposit` | Deposit into a strategy (requires `earn:write`) |
+| `POST` | `/v1/earn/withdraw` | Withdraw from a position (requires `earn:write`) |
+| `GET`  | `/v1/earn/positions` | List user positions (requires `earn:read`) |
+| `GET`  | `/v1/earn/positions/:id` | Get one position with fresh on-chain value |
+
+```typescript
+// SDK usage
+const { strategies } = await finlayer.earn.listStrategies({ asset: 'USDC' });
+const best = strategies.sort((a, b) => parseFloat(b.apy) - parseFloat(a.apy))[0];
+
+const { position } = await finlayer.earn.deposit({
+  strategy_id: best.id,
+  amount: '100',
+  from_address: '0xYourWallet',
+  idempotency_key: crypto.randomUUID(),
+});
+```
+
 ### Affiliate Endpoints
 
 | Method | Endpoint | Description |
@@ -238,7 +261,7 @@ Every transaction automatically tracks revenue:
 |-------|--------|-------------|
 | Phase 1 | ✅ **Complete** | Core foundation + Swap module (ChangeNOW) |
 | Phase 2 | 🔲 Planned | Payments module (MoonPay/Transak) |
-| Phase 3 | 🔲 Planned | Earn/Lending module (Aave/Compound) |
+| Phase 3 | ✅ **Complete** | Earn/Lending module (Aave V3, Compound V3) |
 | Phase 4 | ✅ **Complete** | HD wallets (BIP39/BIP44), affiliate payout scheduler, Prometheus + Sentry |
 | Phase 5 | 🔲 Planned | Growth & Ecosystem |
 

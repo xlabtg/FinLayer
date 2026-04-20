@@ -104,7 +104,7 @@ export interface Provider {
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
 
-export type TransactionType = 'swap' | 'payment' | 'earn_deposit' | 'earn_withdraw';
+export type TransactionType = 'swap' | 'payment' | 'payment_refund' | 'earn_deposit' | 'earn_withdraw';
 export type TransactionStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'refunded' | 'expired';
 
 export interface Transaction {
@@ -213,21 +213,37 @@ export interface InvoiceCreateRequest {
   metadata?: Record<string, unknown>;
 }
 
+export type InvoiceStatus = 'pending' | 'paid' | 'expired' | 'overpaid' | 'underpaid';
+
 export interface Invoice {
   id: UUID;
+  transaction_id: UUID;
+  provider_id: UUID;
+  provider_name: string;
   asset: string;
   amount: Numeric;
   network: string;
   payment_address: string;
-  status: 'pending' | 'paid' | 'expired' | 'overpaid' | 'underpaid';
+  status: InvoiceStatus;
   description: string | null;
+  callback_url: string | null;
   expires_at: ISO8601;
   paid_at: ISO8601 | null;
   paid_amount: Numeric | null;
   tx_hash: string | null;
   affiliate_id: UUID | null;
+  webhook_url: string;
+  revenue_event_id: UUID | null;
   created_at: ISO8601;
   updated_at: ISO8601;
+}
+
+export interface InvoiceResponse {
+  invoice: Invoice;
+}
+
+export interface InvoiceStatusResponse {
+  invoice: Invoice;
 }
 
 // ─── Earn ─────────────────────────────────────────────────────────────────────
@@ -265,9 +281,37 @@ export interface EarnPosition {
   earned_yield: Numeric;
   status: 'active' | 'withdrawn' | 'pending';
   deposit_tx_hash: string | null;
+  deposit_address: string | null;
   unlocks_at: ISO8601 | null;
   created_at: ISO8601;
   updated_at: ISO8601;
+}
+
+export interface EarnStrategiesResponse {
+  strategies: EarnStrategy[];
+}
+
+export interface EarnDepositResponse {
+  position: EarnPosition;
+  deposit_address: string;
+  transaction_id: UUID;
+}
+
+export interface EarnWithdrawRequest {
+  position_id: UUID;
+  to_address: string;
+  affiliate_id?: UUID;
+  idempotency_key: string;
+}
+
+export interface EarnWithdrawResponse {
+  position: EarnPosition;
+  tx_hash: string;
+  transaction_id: UUID;
+}
+
+export interface EarnPositionsResponse {
+  positions: EarnPosition[];
 }
 
 // ─── Wallet ───────────────────────────────────────────────────────────────────

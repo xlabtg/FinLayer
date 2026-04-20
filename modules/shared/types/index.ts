@@ -32,14 +32,30 @@ export interface IPaymentProviderAdapter extends IProviderAdapter {
 
   createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult>;
   getInvoiceStatus(providerInvoiceId: string): Promise<InvoiceStatusResult>;
+  /**
+   * Verify a webhook signature and parse the event.
+   * Returns a normalized event or `null` if the signature is invalid.
+   */
+  verifyWebhook(params: WebhookVerifyParams): WebhookVerifyResult | null;
 }
 
 export interface IEarnProviderAdapter extends IProviderAdapter {
   readonly domain: 'earn';
 
+  /** List available yield strategies for this provider (with latest APY). */
   getStrategies(): Promise<EarnStrategyResult[]>;
+
+  /** Look up a single strategy (used to validate min deposit, asset, etc). */
+  getStrategy(providerStrategyId: string): Promise<EarnStrategyResult | null>;
+
+  /** Initiate a deposit into a strategy. Returns the deposit address/tx info. */
   deposit(params: EarnDepositParams): Promise<EarnDepositResult>;
+
+  /** Initiate a withdrawal from a position. */
   withdraw(params: EarnWithdrawParams): Promise<EarnWithdrawResult>;
+
+  /** Query the current value & earned yield for a position. */
+  getPosition(providerPositionId: string): Promise<EarnPositionResult>;
 }
 
 /**
@@ -138,6 +154,28 @@ export interface InvoiceStatusResult {
   paidAt?: ISO8601;
 }
 
+// ─── Webhook types ────────────────────────────────────────────────────────────
+
+export interface WebhookVerifyParams {
+  rawBody: string;
+  headers: Record<string, string | string[] | undefined>;
+  /** Shared secret the provider uses to sign webhook deliveries. */
+  secret?: string;
+}
+
+export interface WebhookVerifyResult {
+  /** Provider-specific event id — used to deduplicate replayed deliveries. */
+  providerEventId: string;
+  providerInvoiceId: string;
+  eventType: string;
+  status: InvoiceStatusResult['status'];
+  paidAmount?: Numeric;
+  txHash?: string;
+  paidAt?: ISO8601;
+  /** True when the provider's signature header matched our shared secret. */
+  signatureValid: boolean;
+}
+
 // ─── Earn Adapter Types ───────────────────────────────────────────────────────
 
 export interface EarnStrategyResult {
@@ -174,6 +212,18 @@ export interface EarnWithdrawParams {
 export interface EarnWithdrawResult {
   txHash: string;
   status: TransactionStatus;
+  withdrawnAmount?: Numeric;
+}
+
+export interface EarnPositionResult {
+  providerPositionId: string;
+  status: 'pending' | 'active' | 'withdrawn';
+  depositedAmount: Numeric;
+  currentValue: Numeric;
+  earnedYield: Numeric;
+  asset: string;
+  network: string;
+  unlocksAt?: ISO8601;
 }
 
 // ─── Request Context ──────────────────────────────────────────────────────────

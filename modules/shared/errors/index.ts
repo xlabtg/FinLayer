@@ -154,6 +154,104 @@ export class InsufficientLiquidityError extends FinLayerError {
   }
 }
 
+// ─── Payment Errors ───────────────────────────────────────────────────────────
+
+export class InvoiceNotFoundError extends FinLayerError {
+  constructor(invoiceId: string) {
+    super('INVOICE_NOT_FOUND', `Invoice ${invoiceId} not found`, 'payments', 404, {
+      suggestion: 'Verify the invoice id',
+    });
+  }
+}
+
+export class InvoiceExpiredError extends FinLayerError {
+  constructor() {
+    super('INVOICE_EXPIRED', 'Invoice has expired', 'payments', 410, {
+      retryable: true,
+      suggestion: 'Create a new invoice via POST /v1/payments/invoice',
+    });
+  }
+}
+
+export class PaymentProviderUnavailableError extends FinLayerError {
+  constructor(providerName?: string) {
+    super(
+      'PAYMENT_PROVIDER_UNAVAILABLE',
+      providerName
+        ? `Payment provider ${providerName} is not available`
+        : 'No payment providers are configured',
+      'payments',
+      503,
+      {
+        retryable: true,
+        retry_after_ms: 5000,
+        suggestion: 'Configure a payment provider API key or retry later',
+      }
+    );
+  }
+}
+
+export class InvalidWebhookSignatureError extends FinLayerError {
+  constructor(providerName: string) {
+    super(
+      'INVALID_WEBHOOK_SIGNATURE',
+      `${providerName} webhook signature is invalid`,
+      'payments',
+      401,
+      {
+        suggestion: 'Verify the shared secret configured for this provider',
+      }
+    );
+  }
+}
+
+// ─── Earn Errors ──────────────────────────────────────────────────────────────
+
+export class EarnStrategyNotFoundError extends FinLayerError {
+  constructor(strategyId: string) {
+    super('EARN_STRATEGY_NOT_FOUND', `Earn strategy ${strategyId} not found`, 'earn', 404, {
+      suggestion: 'List available strategies via GET /v1/earn/strategies',
+    });
+  }
+}
+
+export class EarnPositionNotFoundError extends FinLayerError {
+  constructor(positionId: string) {
+    super('EARN_POSITION_NOT_FOUND', `Earn position ${positionId} not found`, 'earn', 404);
+  }
+}
+
+export class EarnDepositBelowMinimumError extends FinLayerError {
+  constructor(minDeposit: string, asset: string) {
+    super(
+      'EARN_DEPOSIT_BELOW_MINIMUM',
+      `Deposit amount is below the minimum of ${minDeposit} ${asset}`,
+      'earn',
+      422,
+      {
+        retryable: false,
+        suggestion: `Increase amount to at least ${minDeposit} ${asset}`,
+      }
+    );
+  }
+}
+
+export class EarnPositionLockedError extends FinLayerError {
+  constructor(unlocksAt: string) {
+    super(
+      'EARN_POSITION_LOCKED',
+      `Position is locked until ${unlocksAt}`,
+      'earn',
+      422,
+      {
+        retryable: false,
+        details: { unlocks_at: unlocksAt },
+        suggestion: 'Wait until the lock period ends or choose a flexible strategy',
+      }
+    );
+  }
+}
+
 // ─── Transaction Errors ───────────────────────────────────────────────────────
 
 export class TransactionNotFoundError extends FinLayerError {
