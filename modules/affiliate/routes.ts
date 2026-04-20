@@ -81,6 +81,47 @@ export async function affiliateRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   /**
+   * GET /v1/affiliate/payouts
+   * List the current affiliate's payout batches.
+   */
+  fastify.get('/payouts', {
+    preHandler: [fastify.authenticate, fastify.requireScope('affiliate:read')],
+    schema: {
+      tags: ['Affiliate'],
+      summary: 'List affiliate payout batches',
+      security: [{ bearerAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const affiliate = await affiliateService.getOrCreateAffiliate(request.userId!);
+    const rows = await fastify.sql`
+      SELECT id, amount, asset, payout_address, status, tx_hash,
+             event_count, scheduled_at, processed_at, created_at
+      FROM affiliate_payouts
+      WHERE affiliate_id = ${affiliate.id}
+      ORDER BY created_at DESC
+      LIMIT 100
+    `;
+    return reply.send({ data: { payouts: rows } });
+  });
+
+  /**
+   * POST /v1/affiliate/payouts/run
+   * Trigger a payout batching run (admin-only).
+   */
+  fastify.post('/payouts/run', {
+    preHandler: [fastify.authenticate, fastify.requireScope('admin')],
+    schema: {
+      tags: ['Affiliate'],
+      summary: 'Trigger payout scheduler',
+      description: 'Manually run the affiliate payout batching job. Requires admin scope.',
+      security: [{ bearerAuth: [] }],
+    },
+  }, async (_request, reply) => {
+    const summary = await fastify.payoutScheduler.runOnce();
+    return reply.send({ data: summary });
+  });
+
+  /**
    * GET /r/:code
    * Affiliate link redirect (registered at root, not /v1/affiliate/).
    */
