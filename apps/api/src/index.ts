@@ -14,6 +14,7 @@ import errorHandlerPlugin from './plugins/error-handler.js';
 import authPlugin from '../../../modules/auth/plugin.js';
 import { authRoutes } from '../../../modules/auth/routes.js';
 import { swapRoutes } from '../../../modules/swap/routes.js';
+import { earnRoutes } from '../../../modules/earn/routes.js';
 import { affiliateRoutes } from '../../../modules/affiliate/routes.js';
 import { paymentsRoutes } from '../../../modules/payments/routes.js';
 import { analyticsRoutes } from '../../../modules/analytics/routes.js';
@@ -185,10 +186,10 @@ Authorization: Bearer fl_live_<your-key>
     v1.register(authRoutes, { prefix: '/auth' });
     v1.register(swapRoutes, { prefix: '/swap' });
     v1.register(paymentsRoutes, { prefix: '/payments' });
+    v1.register(earnRoutes, { prefix: '/earn' });
     v1.register(affiliateRoutes, { prefix: '/affiliate' });
     v1.register(analyticsRoutes, { prefix: '/analytics' });
     v1.register(marketplaceRoutes, { prefix: '/marketplace' });
-    // Phase 3-4 modules will be registered here
   }, { prefix: `/${API_VERSION}` });
 
   // Affiliate redirect routes (outside /v1/ prefix)

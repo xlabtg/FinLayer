@@ -205,6 +205,53 @@ export class InvalidWebhookSignatureError extends FinLayerError {
   }
 }
 
+// ─── Earn Errors ──────────────────────────────────────────────────────────────
+
+export class EarnStrategyNotFoundError extends FinLayerError {
+  constructor(strategyId: string) {
+    super('EARN_STRATEGY_NOT_FOUND', `Earn strategy ${strategyId} not found`, 'earn', 404, {
+      suggestion: 'List available strategies via GET /v1/earn/strategies',
+    });
+  }
+}
+
+export class EarnPositionNotFoundError extends FinLayerError {
+  constructor(positionId: string) {
+    super('EARN_POSITION_NOT_FOUND', `Earn position ${positionId} not found`, 'earn', 404);
+  }
+}
+
+export class EarnDepositBelowMinimumError extends FinLayerError {
+  constructor(minDeposit: string, asset: string) {
+    super(
+      'EARN_DEPOSIT_BELOW_MINIMUM',
+      `Deposit amount is below the minimum of ${minDeposit} ${asset}`,
+      'earn',
+      422,
+      {
+        retryable: false,
+        suggestion: `Increase amount to at least ${minDeposit} ${asset}`,
+      }
+    );
+  }
+}
+
+export class EarnPositionLockedError extends FinLayerError {
+  constructor(unlocksAt: string) {
+    super(
+      'EARN_POSITION_LOCKED',
+      `Position is locked until ${unlocksAt}`,
+      'earn',
+      422,
+      {
+        retryable: false,
+        details: { unlocks_at: unlocksAt },
+        suggestion: 'Wait until the lock period ends or choose a flexible strategy',
+      }
+    );
+  }
+}
+
 // ─── Transaction Errors ───────────────────────────────────────────────────────
 
 export class TransactionNotFoundError extends FinLayerError {
