@@ -94,16 +94,16 @@ packages/sdk            ← Depends on: types (HTTP client, no server code)
 
 **Goal**: Yield strategy aggregation (Aave, Compound)
 
-| Task | SP | Risk |
-|------|----|------|
-| [EARN] Strategy pattern + IEarnProviderAdapter | 3 | Low |
-| [PROVIDERS] Aave V3 adapter (deposit/withdraw) | 8 | High (smart contract interaction, gas management) |
-| [PROVIDERS] Compound adapter | 6 | High |
-| [EARN] Position tracking + earn_positions table | 4 | Low |
-| [EARN] APY data feed + strategy listing | 3 | Medium (API rate limits) |
-| [SDK] HiveFinance.earn module | 3 | Low |
+| Task | SP | Status |
+|------|----|--------|
+| [EARN] Strategy pattern + IEarnProviderAdapter | 3 | ✅ Done |
+| [PROVIDERS] Aave V3 adapter (deposit/withdraw) | 8 | ✅ Done (RPC client injected; Alchemy/Infura wiring deferred) |
+| [PROVIDERS] Compound adapter | 6 | ✅ Done (RPC client injected) |
+| [EARN] Position tracking + earn_positions table | 4 | ✅ Done |
+| [EARN] APY data feed + strategy listing | 3 | ✅ Done |
+| [SDK] HiveFinance.earn module | 3 | ✅ Done |
 
-**Risk**: Smart contract interactions require careful gas estimation and reorg handling. Consider using Alchemy/Infura for RPC reliability.
+**Risk**: Smart contract interactions require careful gas estimation and reorg handling. Consider using Alchemy/Infura for RPC reliability. The adapters ship with an injectable `RpcClient` interface so the production deployment can wire Alchemy/Infura without touching the business logic.
 
 ---
 

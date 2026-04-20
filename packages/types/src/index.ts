@@ -281,9 +281,37 @@ export interface EarnPosition {
   earned_yield: Numeric;
   status: 'active' | 'withdrawn' | 'pending';
   deposit_tx_hash: string | null;
+  deposit_address: string | null;
   unlocks_at: ISO8601 | null;
   created_at: ISO8601;
   updated_at: ISO8601;
+}
+
+export interface EarnStrategiesResponse {
+  strategies: EarnStrategy[];
+}
+
+export interface EarnDepositResponse {
+  position: EarnPosition;
+  deposit_address: string;
+  transaction_id: UUID;
+}
+
+export interface EarnWithdrawRequest {
+  position_id: UUID;
+  to_address: string;
+  affiliate_id?: UUID;
+  idempotency_key: string;
+}
+
+export interface EarnWithdrawResponse {
+  position: EarnPosition;
+  tx_hash: string;
+  transaction_id: UUID;
+}
+
+export interface EarnPositionsResponse {
+  positions: EarnPosition[];
 }
 
 // ─── Wallet ───────────────────────────────────────────────────────────────────

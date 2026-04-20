@@ -30,6 +30,14 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
     is_active: true,
     priority: 100,
   });
+  initTable('providers').push({
+    id: generateUUID(),
+    name: 'MockEarnProvider',
+    domain: 'earn',
+    config: {},
+    is_active: true,
+    priority: 100,
+  });
 
   // Seed a payments provider
   initTable('providers').push({
@@ -115,16 +123,108 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return Promise.resolve([]);
       }
 
+      if (query.startsWith('SELECT') && query.includes('FROM PROVIDERS') && query.includes("DOMAIN = 'EARN'")) {
+        // Two variants: list-by-domain, and single provider by id.
+        if (query.includes('WHERE ID = ')) {
+          const providerId = values[0];
+          const rows = initTable('providers').filter(
+            (r) => r['id'] === providerId && r['domain'] === 'earn' && r['is_active'] === true
+          );
+          return Promise.resolve(rows);
+        }
+        const rows = initTable('providers').filter(
+          (r) => r['domain'] === 'earn' && r['is_active'] === true
+        );
+        return Promise.resolve(rows);
+      }
+
       if (query.startsWith('SELECT') && query.includes('FROM PROVIDERS')) {
         const rows = initTable('providers').filter(r => r['is_active'] === true);
         return Promise.resolve(rows);
       }
 
+      // ─── Earn Positions ─────────────────────────────────────────────────────
+      if (query.startsWith('INSERT INTO EARN_POSITIONS')) {
+        const row: MockRow = {
+          id: values[0],
+          user_id: values[1],
+          provider_id: values[2],
+          provider_strategy_id: values[3],
+          provider_position_id: values[4],
+          asset: values[5],
+          network: values[6],
+          deposited_amount: values[7],
+          current_value: values[8],
+          earned_yield: values[9],
+          status: 'pending',
+          deposit_tx_hash: null,
+          deposit_transaction_id: values[10],
+          unlocks_at: values[11] ? new Date(values[11] as string) : null,
+          created_at: new Date(values[12] as string),
+          updated_at: new Date(values[13] as string),
+        };
+        initTable('earn_positions').push(row);
+        return Promise.resolve([row]);
+      }
+
+      if (query.startsWith('UPDATE EARN_POSITIONS') && query.includes("STATUS = 'WITHDRAWN'")) {
+        const positionId = values[0];
+        const rows = initTable('earn_positions');
+        const row = rows.find(r => r['id'] === positionId);
+        if (row) {
+          row['status'] = 'withdrawn';
+          row['updated_at'] = new Date();
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('UPDATE EARN_POSITIONS')) {
+        const currentValue = values[0];
+        const earnedYield = values[1];
+        const status = values[2];
+        const positionId = values[3];
+        const rows = initTable('earn_positions');
+        const row = rows.find(r => r['id'] === positionId);
+        if (row) {
+          row['current_value'] = currentValue;
+          row['earned_yield'] = earnedYield;
+          row['status'] = status;
+          row['updated_at'] = new Date();
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('SELECT') && query.includes('FROM EARN_POSITIONS')) {
+        // Two variants: by-id + user, or by user only.
+        const providers = initTable('providers');
+        if (query.includes('WHERE EP.ID = ')) {
+          const positionId = values[0];
+          const userId = values[1];
+          const rows = initTable('earn_positions').filter(
+            (r) => r['id'] === positionId && r['user_id'] === userId
+          );
+          return Promise.resolve(
+            rows.map((r) => {
+              const provider = providers.find((p) => p['id'] === r['provider_id']);
+              return { ...r, provider_name: provider?.['name'] ?? 'Unknown' };
+            })
+          );
+        }
+        const userId = values[0];
+        const rows = initTable('earn_positions').filter((r) => r['user_id'] === userId);
+        return Promise.resolve(
+          rows.map((r) => {
+            const provider = providers.find((p) => p['id'] === r['provider_id']);
+            return { ...r, provider_name: provider?.['name'] ?? 'Unknown' };
+          })
+        );
+      }
+
       if (query.startsWith('INSERT INTO TRANSACTIONS')) {
-        // Transaction INSERTs have different value layouts for swap vs payment
-        // because `type`/`domain`/`status` may be template literals (swap) or
-        // bound values (payment). Detect via the SQL text.
+        // Transaction INSERTs have different value layouts for swap vs payment vs earn
+        // because `type`/`domain`/`status` may be template literals or bound values.
         const isPayment = query.includes("'PAYMENT'") && query.includes("'PAYMENTS'");
+        const isEarn = query.includes("'EARN_DEPOSIT'") || query.includes("'EARN_WITHDRAW'");
         let row: MockRow;
         if (isPayment) {
           // [id, userId, asset, null, amount, fee, asset, providerId, providerTxId, idem, affId, meta, now, now]
@@ -148,6 +248,30 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
             updated_at: new Date(values[13] as string),
             revenue_event_id: null,
             result_amount: null,
+          };
+        } else if (isEarn) {
+          // earn layout: type/domain are SQL literals; [id, status, userId, from, to, amount, providerId, providerTxId, idem, affId, meta, now, now]
+          const typeMatch = query.match(/VALUES\s*\(\s*\?\s*,\s*'([A-Z_]+)'\s*,\s*'([A-Z_]+)'/);
+          const type = typeMatch ? typeMatch[1]!.toLowerCase() : 'earn_deposit';
+          const domain = typeMatch ? typeMatch[2]!.toLowerCase() : 'earn';
+          const rawMetadata = values[10];
+          row = {
+            id: values[0],
+            type,
+            domain,
+            status: values[1],
+            user_id: values[2],
+            from_asset: values[3],
+            to_asset: values[4],
+            amount: values[5],
+            provider_id: values[6],
+            provider_tx_id: values[7],
+            idempotency_key: values[8],
+            affiliate_id: values[9],
+            metadata: typeof rawMetadata === 'string' ? JSON.parse(rawMetadata) : rawMetadata,
+            created_at: new Date(values[11] as string),
+            updated_at: new Date(values[12] as string),
+            revenue_event_id: null,
           };
         } else {
           // swap layout: [id, status, userId, from, to, amount, providerId, providerTxId, idem, affId, meta, now, now]
