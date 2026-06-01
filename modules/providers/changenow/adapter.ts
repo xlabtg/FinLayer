@@ -6,6 +6,7 @@
  * Implements ISwapProviderAdapter for quote + execute + status.
  */
 
+import { createHmac, timingSafeEqual } from 'crypto';
 import type {
   ISwapProviderAdapter,
   SwapQuoteParams,
@@ -13,6 +14,8 @@ import type {
   SwapExecuteParams,
   SwapExecuteResult,
   SwapStatusResult,
+  SwapWebhookVerifyParams,
+  SwapWebhookVerifyResult,
 } from '../../shared/types/index.js';
 import { ProviderError, ProviderRateLimitError, InsufficientLiquidityError } from '../../shared/errors/index.js';
 import { futureISO } from '@finlayer/utils';
@@ -85,9 +88,11 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
 
   private readonly apiKey: string;
   private readonly apiUrl: string;
+  private readonly webhookSecret: string;
 
-  constructor(apiKey: string, apiUrl: string = CHANGENOW_API_URL) {
+  constructor(apiKey: string, webhookSecret: string = '', apiUrl: string = CHANGENOW_API_URL) {
     this.apiKey = apiKey;
+    this.webhookSecret = webhookSecret;
     this.apiUrl = apiUrl;
   }
 
@@ -203,6 +208,39 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
     };
   }
 
+  /**
+   * Verify a ChangeNOW webhook delivery.
+   *
+   * ChangeNOW signs the raw request body with HMAC-SHA256 using the secret
+   * configured in the merchant dashboard, delivered in the
+   * `x-changenow-signature` header. We fail closed: when no secret is
+   * configured the signature can never be considered valid.
+   */
+  verifyWebhook(params: SwapWebhookVerifyParams): SwapWebhookVerifyResult | null {
+    const secret = params.secret ?? this.webhookSecret;
+    const signatureHeader = headerValue(params.headers, 'x-changenow-signature');
+    const signatureValid = secret
+      ? verifyHmacSha256(params.rawBody, secret, signatureHeader)
+      : false;
+
+    let payload: ChangeNOWStatusResponse;
+    try {
+      payload = JSON.parse(params.rawBody) as ChangeNOWStatusResponse;
+    } catch {
+      return null;
+    }
+
+    const providerTxId = String(payload.id ?? '');
+    if (!providerTxId) return null;
+
+    return {
+      providerTxId,
+      status: STATUS_MAP[payload.status] ?? 'pending',
+      txHash: payload.payoutHash ?? undefined,
+      signatureValid,
+    };
+  }
+
   private async request<T>(
     path: string,
     method: 'GET' | 'POST',
@@ -250,4 +288,22 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
     const max = match[2] ? parseInt(match[2], 10) : min;
     return Math.round(((min + max) / 2) * 60);
   }
+}
+
+function headerValue(
+  headers: Record<string, string | string[] | undefined>,
+  name: string
+): string {
+  const raw = headers[name.toLowerCase()] ?? headers[name];
+  if (Array.isArray(raw)) return raw[0] ?? '';
+  return raw ?? '';
+}
+
+function verifyHmacSha256(body: string, secret: string, signature: string): boolean {
+  if (!signature) return false;
+  const expected = createHmac('sha256', secret).update(body).digest('hex');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }

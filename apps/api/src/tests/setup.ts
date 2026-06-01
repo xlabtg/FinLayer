@@ -350,6 +350,25 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return Promise.resolve([]);
       }
 
+      // Domain-scoped swap webhook lookup: WHERE t.id = ? AND t.domain = 'swap'
+      if (
+        query.startsWith('SELECT') &&
+        query.includes('FROM TRANSACTIONS') &&
+        query.includes("DOMAIN = 'SWAP'")
+      ) {
+        const txId = values[0];
+        const providers = initTable('providers');
+        const rows = initTable('transactions').filter(
+          r => r['id'] === txId && r['domain'] === 'swap'
+        );
+        return Promise.resolve(
+          rows.map(r => {
+            const provider = providers.find(p => p['id'] === r['provider_id']);
+            return { ...r, provider_name: provider?.['name'] ?? 'Unknown' };
+          })
+        );
+      }
+
       if (query.startsWith('SELECT') && query.includes('FROM TRANSACTIONS')) {
         const txId = values[0];
         // Single-arg SELECT (WHERE id = ?) — used for revenue event emission

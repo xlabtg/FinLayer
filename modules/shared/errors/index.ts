@@ -192,11 +192,11 @@ export class PaymentProviderUnavailableError extends FinLayerError {
 }
 
 export class InvalidWebhookSignatureError extends FinLayerError {
-  constructor(providerName: string) {
+  constructor(providerName: string, domain: ErrorDomain = 'payments') {
     super(
       'INVALID_WEBHOOK_SIGNATURE',
       `${providerName} webhook signature is invalid`,
-      'payments',
+      domain,
       401,
       {
         suggestion: 'Verify the shared secret configured for this provider',

@@ -10,6 +10,8 @@ import type {
   SwapExecuteParams,
   SwapExecuteResult,
   SwapStatusResult,
+  SwapWebhookVerifyParams,
+  SwapWebhookVerifyResult,
 } from '../../../../modules/shared/types/index.js';
 import { futureISO } from '@finlayer/utils';
 
@@ -17,6 +19,9 @@ export class MockSwapProvider implements ISwapProviderAdapter {
   public readonly name = 'MockProvider';
   public readonly domain = 'swap' as const;
   public readonly supportedAssets = ['BTC', 'ETH', 'USDC', 'BNB'];
+
+  /** Toggle to force signature verification to fail for testing. */
+  public forceInvalidSignature = false;
 
   private txStatuses = new Map<string, SwapStatusResult['status']>();
 
@@ -78,6 +83,26 @@ export class MockSwapProvider implements ISwapProviderAdapter {
       providerTxId,
       status: this.txStatuses.get(providerTxId) ?? 'pending',
     };
+  }
+
+  verifyWebhook(params: SwapWebhookVerifyParams): SwapWebhookVerifyResult | null {
+    try {
+      const body = JSON.parse(params.rawBody) as {
+        id?: string;
+        provider_tx_id?: string;
+        status?: SwapStatusResult['status'];
+        tx_hash?: string;
+      };
+      const providerTxId = body.provider_tx_id ?? body.id ?? '';
+      return {
+        providerTxId,
+        status: body.status ?? 'pending',
+        txHash: body.tx_hash,
+        signatureValid: !this.forceInvalidSignature,
+      };
+    } catch {
+      return null;
+    }
   }
 
   /** Test helper: set transaction to a specific status */
