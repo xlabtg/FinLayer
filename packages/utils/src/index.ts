@@ -69,12 +69,38 @@ export function isValidAmount(amount: string): boolean {
 // ─── API Key Helpers ──────────────────────────────────────────────────────────
 
 /**
- * Generate a new API key. Returns both the full key (for the user) and prefix (for DB storage).
+ * Generate a new API key.
+ *
+ * Format: `<prefix>_<keyId>_<secret>` (e.g. `fl_live_<keyId>_<secret>`).
+ * The `keyId` is a public, unique, indexable identifier embedded in the key so a
+ * single key can be located with one indexed lookup — and verified with exactly
+ * one `bcrypt.compare`. Returns the full key (for the user), the keyId and the
+ * prefix (both for DB storage).
  */
-export function generateApiKey(prefix: string = 'fl_live'): { key: string; keyPrefix: string } {
-  const random = randomUUID().replace(/-/g, '');
-  const key = `${prefix}_${random}`;
-  return { key, keyPrefix: prefix };
+export function generateApiKey(
+  prefix: string = 'fl_live'
+): { key: string; keyId: string; keyPrefix: string } {
+  const keyId = randomUUID().replace(/-/g, '');
+  const secret = randomUUID().replace(/-/g, '');
+  const key = `${prefix}_${keyId}_${secret}`;
+  return { key, keyId, keyPrefix: prefix };
+}
+
+/**
+ * Parse an API key into its public components (prefix + keyId).
+ * Returns null when the key is malformed.
+ *
+ * The prefix is the first two underscore-separated segments (e.g. `fl_live`),
+ * the keyId is the third segment, and the remaining segment(s) are the secret.
+ */
+export function parseApiKey(rawKey: string): { prefix: string; keyId: string } | null {
+  if (typeof rawKey !== 'string') return null;
+  const parts = rawKey.split('_');
+  // Expected: <p0>_<p1>_<keyId>_<secret>
+  if (parts.length < 4) return null;
+  const [p0, p1, keyId] = parts;
+  if (!p0 || !p1 || !keyId) return null;
+  return { prefix: `${p0}_${p1}`, keyId };
 }
 
 // ─── Idempotency ──────────────────────────────────────────────────────────────

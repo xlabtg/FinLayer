@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     name        VARCHAR(255) NOT NULL,
     key_hash    VARCHAR(255) NOT NULL UNIQUE,  -- bcrypt hash, NEVER store plain key
     key_prefix  VARCHAR(50)  NOT NULL,         -- e.g. "fl_live" for display
+    key_id      VARCHAR(64)  NOT NULL UNIQUE,  -- public unique id embedded in the key, for O(1) lookup
     scopes      TEXT[]       NOT NULL DEFAULT '{}',
     rate_limit  INTEGER      NOT NULL DEFAULT 60,  -- requests per minute
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id   ON api_keys (user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON api_keys (key_prefix);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key_id ON api_keys (key_id);
 
 -- ─── Providers ────────────────────────────────────────────────────────────────
 

@@ -10,7 +10,7 @@
 
 import bcrypt from 'bcryptjs';
 import type { SQL } from 'postgres';
-import { generateUUID, generateApiKey, nowISO, futureISO } from '@finlayer/utils';
+import { generateUUID, generateApiKey, parseApiKey, nowISO, futureISO } from '@finlayer/utils';
 import type {
   ApiKey,
   ApiKeyScope,
@@ -31,6 +31,7 @@ interface DbApiKey {
   name: string;
   key_hash: string;
   key_prefix: string;
+  key_id: string;
   scopes: string[];
   rate_limit: number;
   created_at: Date;
@@ -54,17 +55,18 @@ export class AuthService {
     isTestMode = false
   ): Promise<ApiKeyCreateResponse> {
     const prefix = isTestMode ? KEY_PREFIX_TEST : KEY_PREFIX_LIVE;
-    const { key } = generateApiKey(prefix);
+    const { key, keyId } = generateApiKey(prefix);
 
     const keyHash = await bcrypt.hash(key, BCRYPT_ROUNDS);
 
     const [row] = await this.sql<DbApiKey[]>`
-      INSERT INTO api_keys (user_id, name, key_hash, key_prefix, scopes, rate_limit, expires_at)
+      INSERT INTO api_keys (user_id, name, key_hash, key_prefix, key_id, scopes, rate_limit, expires_at)
       VALUES (
         ${userId},
         ${request.name},
         ${keyHash},
         ${prefix},
+        ${keyId},
         ${request.scopes as string[]},
         ${request.rate_limit ?? 60},
         ${request.expires_at ?? null}
@@ -92,37 +94,29 @@ export class AuthService {
       throw new UnauthorizedError();
     }
 
-    // Extract prefix from key (e.g., "fl_live_abc123" → "fl_live")
-    const parts = rawKey.split('_');
-    if (parts.length < 3) {
+    // Extract the unique keyId embedded in the key (e.g. "fl_live_<keyId>_<secret>").
+    const parsed = parseApiKey(rawKey);
+    if (!parsed) {
       throw new UnauthorizedError();
     }
-    const prefix = `${parts[0]}_${parts[1]}`;
 
-    // Find candidates by prefix (avoids full table scan)
-    const rows = await this.sql<DbApiKey[]>`
+    // Look up the single key by its unique, indexed keyId — no LIMIT heuristic,
+    // no candidate scan. At most one row matches, regardless of key count.
+    const [matchedRow] = await this.sql<DbApiKey[]>`
       SELECT * FROM api_keys
-      WHERE key_prefix = ${prefix}
+      WHERE key_id = ${parsed.keyId}
         AND revoked_at IS NULL
         AND (expires_at IS NULL OR expires_at > NOW())
-      LIMIT 20
+      LIMIT 1
     `;
 
-    if (rows.length === 0) {
+    if (!matchedRow) {
       throw new UnauthorizedError();
     }
 
-    // bcrypt compare against each candidate (at most 20)
-    let matchedRow: DbApiKey | null = null;
-    for (const row of rows) {
-      const matches = await bcrypt.compare(rawKey, row.key_hash);
-      if (matches) {
-        matchedRow = row;
-        break;
-      }
-    }
-
-    if (!matchedRow) {
+    // Exactly one bcrypt.compare per request — constant cost, no CPU-DoS amplification.
+    const matches = await bcrypt.compare(rawKey, matchedRow.key_hash);
+    if (!matches) {
       throw new UnauthorizedError();
     }
 
