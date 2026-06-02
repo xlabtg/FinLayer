@@ -66,11 +66,12 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
           name: values[1],
           key_hash: values[2],
           key_prefix: values[3],
-          scopes: values[4],
-          rate_limit: values[5],
+          key_id: values[4],
+          scopes: values[5],
+          rate_limit: values[6],
           created_at: new Date(),
           last_used_at: null,
-          expires_at: values[6] ? new Date(values[6] as string) : null,
+          expires_at: values[7] ? new Date(values[7] as string) : null,
           revoked_at: null,
         };
         initTable('api_keys').push(row);
@@ -78,8 +79,22 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('SELECT * FROM API_KEYS')) {
-        const rows = initTable('api_keys').filter(r => !r['revoked_at']);
-        return Promise.resolve(rows);
+        const apiKeys = initTable('api_keys');
+        // validateApiKey: lookup by the unique key_id.
+        if (query.includes('KEY_ID =')) {
+          const keyId = values[0];
+          return Promise.resolve(
+            apiKeys.filter(r => !r['revoked_at'] && r['key_id'] === keyId)
+          );
+        }
+        // getApiKey: lookup by row id.
+        if (query.includes('ID =')) {
+          const id = values[0];
+          return Promise.resolve(
+            apiKeys.filter(r => !r['revoked_at'] && r['id'] === id)
+          );
+        }
+        return Promise.resolve(apiKeys.filter(r => !r['revoked_at']));
       }
 
       if (query.startsWith('INSERT INTO SWAP_QUOTES')) {
