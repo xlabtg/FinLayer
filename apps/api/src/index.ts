@@ -9,6 +9,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 
+import { registerShutdownHandlers } from './shutdown.js';
 import databasePlugin from './plugins/database.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
 import authPlugin from '../../../modules/auth/plugin.js';
@@ -209,6 +210,10 @@ Authorization: Bearer fl_live_<your-key>
 async function start(): Promise<void> {
   const app = await buildApp();
 
+  // Bind graceful shutdown to the *running* instance so SIGTERM/SIGINT close
+  // the server that is actually serving traffic (issue #16).
+  registerShutdownHandlers(app);
+
   try {
     await app.listen({ port: PORT, host: HOST });
     app.log.info(`FinLayer API running on http://${HOST}:${PORT}`);
@@ -219,13 +224,9 @@ async function start(): Promise<void> {
   }
 }
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  const app = await buildApp();
-  await app.close();
-  process.exit(0);
-});
-
-start();
+// Only start the server when run directly, not when imported (e.g. in tests).
+if (import.meta.main) {
+  start();
+}
 
 export { buildApp };
