@@ -25,6 +25,11 @@ export interface ISwapProviderAdapter extends IProviderAdapter {
   getQuote(params: SwapQuoteParams): Promise<SwapQuoteResult>;
   executeSwap(params: SwapExecuteParams): Promise<SwapExecuteResult>;
   getTransactionStatus(providerTxId: string): Promise<SwapStatusResult>;
+  /**
+   * Verify a webhook signature and parse the status update.
+   * Returns a normalized event, or `null` if the payload is malformed.
+   */
+  verifyWebhook(params: SwapWebhookVerifyParams): SwapWebhookVerifyResult | null;
 }
 
 export interface IPaymentProviderAdapter extends IProviderAdapter {
@@ -127,6 +132,22 @@ export interface SwapStatusResult {
   status: TransactionStatus;
   txHash?: string;
   completedAt?: ISO8601;
+}
+
+export interface SwapWebhookVerifyParams {
+  rawBody: string;
+  headers: Record<string, string | string[] | undefined>;
+  /** Shared secret the provider uses to sign webhook deliveries. */
+  secret?: string;
+}
+
+export interface SwapWebhookVerifyResult {
+  /** Provider's own transaction id — cross-checked against the target row. */
+  providerTxId: string;
+  status: TransactionStatus;
+  txHash?: string;
+  /** True when the provider's signature header matched the shared secret. */
+  signatureValid: boolean;
 }
 
 // ─── Payment Adapter Types ────────────────────────────────────────────────────

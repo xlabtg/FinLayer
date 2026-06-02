@@ -22,6 +22,7 @@ import {
   TransactionNotFoundError,
   DuplicateIdempotencyKeyError,
   IdempotencyError,
+  InvalidWebhookSignatureError,
 } from '../shared/errors/index.js';
 import { RevenueService } from './revenue.js';
 import { logger } from '../shared/utils/logger.js';
@@ -87,6 +88,31 @@ interface DbTransaction {
   created_at: Date;
   updated_at: Date;
 }
+
+/**
+ * Allowed swap status transitions. Terminal states (completed, failed,
+ * refunded, expired) accept no further transitions, so a forged webhook can't
+ * resurrect or rewrite a settled transaction. Same-status deliveries are
+ * treated as no-ops.
+ */
+const SWAP_STATUS_TRANSITIONS: Record<TransactionStatus, TransactionStatus[]> = {
+  pending: ['processing', 'completed', 'failed', 'refunded', 'expired'],
+  processing: ['completed', 'failed', 'refunded', 'expired'],
+  completed: [],
+  failed: [],
+  refunded: [],
+  expired: [],
+};
+
+/** True when `to` is a permitted next status for a swap currently at `from`. */
+export function isValidSwapStatusTransition(
+  from: TransactionStatus,
+  to: TransactionStatus
+): boolean {
+  return SWAP_STATUS_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface SwapServiceOptions {
   /** Persistent TTL cache for provider quotes. Defaults to in-memory. */
@@ -457,6 +483,103 @@ export class SwapService {
     }
 
     return this.buildSwapTransactionFromDb(row);
+  }
+
+  /**
+   * Handle a provider status webhook for `POST /v1/swap/webhook/:id`.
+   *
+   * Security model (issue #13):
+   *  - The `:id` is our internal transaction id and MUST be a UUID.
+   *  - The lookup is scoped to `domain = 'swap'`, so a swap webhook can never
+   *    touch a payments/earn row even if an attacker supplies a foreign id.
+   *  - The provider that owns the row signs the body; we verify the HMAC
+   *    signature with that provider's secret and fail closed when it doesn't
+   *    match (no secret configured ⇒ never valid).
+   *  - Status changes follow a state machine; terminal rows are immutable and
+   *    invalid transitions are no-ops (we don't error, to avoid provider
+   *    retry storms).
+   */
+  async handleWebhook(params: {
+    txId: string;
+    rawBody: string;
+    headers: Record<string, string | string[] | undefined>;
+  }): Promise<{ processed: boolean; status: TransactionStatus; previousStatus: TransactionStatus }> {
+    const { txId, rawBody, headers } = params;
+
+    if (!UUID_RE.test(txId)) {
+      throw new ValidationError('Transaction id must be a valid UUID');
+    }
+
+    // Domain-scoped lookup: a swap webhook can only ever resolve a swap row.
+    const [row] = await this.sql<
+      {
+        id: string;
+        status: TransactionStatus;
+        provider_id: string;
+        provider_tx_id: string | null;
+        provider_name: string;
+      }[]
+    >`
+      SELECT t.id, t.status, t.provider_id, t.provider_tx_id, p.name AS provider_name
+      FROM transactions t
+      JOIN providers p ON p.id = t.provider_id
+      WHERE t.id = ${txId} AND t.domain = 'swap'
+    `;
+
+    if (!row) {
+      throw new TransactionNotFoundError(txId);
+    }
+
+    const provider = this.providers.get(row.provider_name);
+    if (!provider) {
+      throw new ValidationError(`Provider ${row.provider_name} is not available`);
+    }
+
+    const parsed = provider.verifyWebhook({ rawBody, headers });
+    if (!parsed) {
+      throw new ValidationError('Malformed webhook payload');
+    }
+
+    if (!parsed.signatureValid) {
+      logger.warn('Swap webhook rejected: invalid signature', {
+        txId,
+        provider: row.provider_name,
+      });
+      throw new InvalidWebhookSignatureError(row.provider_name, 'swap');
+    }
+
+    // Cross-check the provider's own tx id against the target row, so a valid
+    // signature for one transaction can't be replayed against another.
+    if (row.provider_tx_id && parsed.providerTxId && row.provider_tx_id !== parsed.providerTxId) {
+      logger.warn('Swap webhook rejected: provider tx id mismatch', {
+        txId,
+        expected: row.provider_tx_id,
+        received: parsed.providerTxId,
+      });
+      throw new ValidationError('Webhook does not match the target transaction');
+    }
+
+    const previousStatus = row.status;
+    const nextStatus = parsed.status;
+
+    if (nextStatus === previousStatus || !isValidSwapStatusTransition(previousStatus, nextStatus)) {
+      logger.info('Swap webhook ignored: no valid transition', {
+        txId,
+        from: previousStatus,
+        to: nextStatus,
+      });
+      return { processed: false, status: previousStatus, previousStatus };
+    }
+
+    await this.sql`
+      UPDATE transactions
+      SET status = ${nextStatus}, updated_at = NOW()
+      WHERE id = ${txId} AND domain = 'swap'
+    `;
+
+    logger.info('Swap webhook applied', { txId, from: previousStatus, to: nextStatus });
+
+    return { processed: true, status: nextStatus, previousStatus };
   }
 
   private buildSwapTransaction(

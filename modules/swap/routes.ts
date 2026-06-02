@@ -35,7 +35,11 @@ export async function swapRoutes(fastify: FastifyInstance): Promise<void> {
   const providers = new Map<string, ISwapProviderAdapter>();
   const changeNowApiKey = process.env['CHANGENOW_API_KEY'];
   if (changeNowApiKey) {
-    providers.set('ChangeNOW', new ChangeNOWAdapter(changeNowApiKey));
+    const changeNowWebhookSecret = process.env['CHANGENOW_WEBHOOK_SECRET'] ?? '';
+    providers.set('ChangeNOW', new ChangeNOWAdapter(changeNowApiKey, changeNowWebhookSecret));
+    if (!changeNowWebhookSecret) {
+      logger.warn('CHANGENOW_WEBHOOK_SECRET not set — swap webhooks will be rejected until configured');
+    }
     logger.info('ChangeNOW provider initialized');
   } else {
     logger.warn('CHANGENOW_API_KEY not set — swap provider not available in production');
@@ -204,37 +208,48 @@ export async function swapRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * POST /v1/swap/webhook/:id
    * Internal webhook endpoint for provider status updates.
+   *
+   * No bearer auth — providers call this directly. Authenticity is established
+   * by verifying the provider's HMAC signature over the raw body (see
+   * SwapService.handleWebhook). The `:id` is validated as a UUID and the update
+   * is scoped to `domain = 'swap'`, so a forged or foreign request cannot touch
+   * a payments/earn transaction.
    */
   fastify.post('/webhook/:id', {
+    config: {
+      // Keep a raw copy of the body for signature verification.
+      rawBody: true,
+    },
     schema: {
       tags: ['Swap', 'Internal'],
       summary: 'Provider webhook',
-      description: 'Receives status updates from swap providers.',
+      description: 'Receives signed status updates from swap providers.',
       params: {
         type: 'object',
         required: ['id'],
         properties: {
-          id: { type: 'string', description: 'Transaction ID' },
+          id: { type: 'string', format: 'uuid', description: 'Transaction ID' },
         },
       },
     },
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = request.body as Record<string, unknown>;
 
-    logger.info('Swap webhook received', { txId: id, body });
+    const rawBody =
+      typeof (request as unknown as { rawBody?: string | Buffer }).rawBody === 'string'
+        ? ((request as unknown as { rawBody: string }).rawBody)
+        : Buffer.isBuffer((request as unknown as { rawBody?: Buffer }).rawBody)
+        ? ((request as unknown as { rawBody: Buffer }).rawBody.toString('utf8'))
+        : JSON.stringify(request.body ?? {});
 
-    // Update transaction status based on webhook payload
-    const status = String(body['status'] ?? 'pending');
-    const validStatuses = ['pending', 'processing', 'completed', 'failed', 'refunded', 'expired'];
-    if (validStatuses.includes(status)) {
-      await fastify.sql`
-        UPDATE transactions
-        SET status = ${status}, updated_at = NOW()
-        WHERE id = ${id}
-      `;
-    }
+    logger.info('Swap webhook received', { txId: id });
 
-    return reply.send({ ok: true });
+    const result = await swapService.handleWebhook({
+      txId: id,
+      rawBody,
+      headers: request.headers as Record<string, string | string[] | undefined>,
+    });
+
+    return reply.send({ ok: true, ...result });
   });
 }
