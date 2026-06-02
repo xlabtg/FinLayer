@@ -188,6 +188,97 @@ describe('Swap Flow', () => {
     });
   });
 
+  describe('Idempotency under concurrency (issue #15)', () => {
+    let quoteIdA: string;
+    let quoteIdB: string;
+
+    beforeEach(async () => {
+      const a = await swapService.getQuote(userId, {
+        from_asset: 'BTC',
+        to_asset: 'ETH',
+        amount: '0.1',
+      });
+      const b = await swapService.getQuote(userId, {
+        from_asset: 'BTC',
+        to_asset: 'ETH',
+        amount: '0.1',
+      });
+      quoteIdA = a.best_quote_id;
+      quoteIdB = b.best_quote_id;
+    });
+
+    test('concurrent requests with the same key call the provider exactly once', async () => {
+      const idempotencyKey = generateUUID();
+      // Widen the race window so both requests overlap inside executeSwap.
+      mockProvider.executeDelayMs = 25;
+
+      const results = await Promise.allSettled([
+        swapService.executeSwap(userId, {
+          quote_id: quoteIdA,
+          recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+          idempotency_key: idempotencyKey,
+        }),
+        swapService.executeSwap(userId, {
+          quote_id: quoteIdB,
+          recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+          idempotency_key: idempotencyKey,
+        }),
+      ]);
+
+      // Exactly one provider call — the core acceptance criterion.
+      expect(mockProvider.executeSwapCalls).toBe(1);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+        DuplicateIdempotencyKeyError
+      );
+
+      // Only one transaction row persisted for the key.
+      const txs = (mockSql._tables.get('transactions') ?? []).filter(
+        (t) => t['idempotency_key'] === idempotencyKey
+      );
+      expect(txs.length).toBe(1);
+    });
+
+    test('provider failure releases the reservation so the key can be retried', async () => {
+      const idempotencyKey = generateUUID();
+
+      // First attempt: provider throws — reservation must be rolled back.
+      mockProvider.forceExecuteError = true;
+      await expect(
+        swapService.executeSwap(userId, {
+          quote_id: quoteIdA,
+          recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+          idempotency_key: idempotencyKey,
+        })
+      ).rejects.toThrow();
+
+      // No row should linger for the failed key.
+      let txs = (mockSql._tables.get('transactions') ?? []).filter(
+        (t) => t['idempotency_key'] === idempotencyKey
+      );
+      expect(txs.length).toBe(0);
+
+      // Retry with the same key now succeeds.
+      mockProvider.forceExecuteError = false;
+      const tx = await swapService.executeSwap(userId, {
+        quote_id: quoteIdB,
+        recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+        idempotency_key: idempotencyKey,
+      });
+      expect(tx.id).toBeDefined();
+      expect(mockProvider.executeSwapCalls).toBe(2);
+
+      txs = (mockSql._tables.get('transactions') ?? []).filter(
+        (t) => t['idempotency_key'] === idempotencyKey
+      );
+      expect(txs.length).toBe(1);
+    });
+  });
+
   describe('GET /v1/swap/tx/:id', () => {
     test('returns transaction status', async () => {
       const quoteResponse = await swapService.getQuote(userId, {

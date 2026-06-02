@@ -59,6 +59,18 @@ export class MockEarnProvider implements IEarnProviderAdapter {
 
   private positions = new Map<string, EarnPositionResult>();
 
+  /** Number of times deposit/withdraw have been invoked (idempotency tests). */
+  public depositCalls = 0;
+  public withdrawCalls = 0;
+
+  /** Optional artificial delay (ms) before deposit/withdraw resolve, to widen the concurrency race window. */
+  public depositDelayMs = 0;
+  public withdrawDelayMs = 0;
+
+  /** Toggles to force deposit/withdraw to throw, to test reservation rollback. */
+  public forceDepositError = false;
+  public forceWithdrawError = false;
+
   async isHealthy(): Promise<boolean> {
     return true;
   }
@@ -72,6 +84,13 @@ export class MockEarnProvider implements IEarnProviderAdapter {
   }
 
   async deposit(params: EarnDepositParams): Promise<EarnDepositResult> {
+    this.depositCalls += 1;
+    if (this.depositDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.depositDelayMs));
+    }
+    if (this.forceDepositError) {
+      throw new Error('provider deposit failure');
+    }
     const strategy = await this.getStrategy(params.strategyId);
     if (!strategy) {
       throw new Error(`Strategy ${params.strategyId} not found`);
@@ -95,6 +114,13 @@ export class MockEarnProvider implements IEarnProviderAdapter {
   }
 
   async withdraw(params: EarnWithdrawParams): Promise<EarnWithdrawResult> {
+    this.withdrawCalls += 1;
+    if (this.withdrawDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.withdrawDelayMs));
+    }
+    if (this.forceWithdrawError) {
+      throw new Error('provider withdraw failure');
+    }
     const pos = this.positions.get(params.providerPositionId);
     if (!pos) {
       throw new Error(`Position ${params.providerPositionId} not found`);

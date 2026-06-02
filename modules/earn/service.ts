@@ -104,14 +104,6 @@ export class EarnService {
       throw new ValidationError(`Invalid amount: ${request.amount}`);
     }
 
-    // Duplicate idempotency check
-    const [dup] = await this.sql<{ id: string }[]>`
-      SELECT id FROM transactions WHERE idempotency_key = ${request.idempotency_key}
-    `;
-    if (dup) {
-      throw new DuplicateIdempotencyKeyError(dup.id);
-    }
-
     // strategy_id in the API is our composite: "<provider_id>:<provider_strategy_id>"
     const { providerId, providerStrategyId } = this.parseStrategyId(request.strategy_id);
 
@@ -135,13 +127,6 @@ export class EarnService {
       throw new EarnDepositBelowMinimumError(strategy.minDeposit, strategy.asset);
     }
 
-    // Execute deposit on provider
-    const depositResult = await adapter.deposit({
-      strategyId: providerStrategyId,
-      amount: request.amount,
-      fromAddress: request.from_address,
-    });
-
     const txId = generateUUID();
     const positionId = generateUUID();
     const now = nowISO();
@@ -150,18 +135,19 @@ export class EarnService {
         ? new Date(Date.now() + strategy.lockPeriodDays * 86_400_000).toISOString()
         : null;
 
-    await this.sql`
+    // Reserve the idempotency key *before* the provider deposit (issue #15).
+    // The atomic `ON CONFLICT DO NOTHING` guarantees a single deposit per key
+    // even under concurrent retries.
+    const reserved = await this.sql<{ id: string }[]>`
       INSERT INTO transactions (
         id, type, domain, status, user_id,
         from_asset, to_asset, amount,
-        provider_id, provider_tx_id,
-        idempotency_key, affiliate_id,
+        provider_id, idempotency_key, affiliate_id,
         metadata, created_at, updated_at
       ) VALUES (
-        ${txId}, 'earn_deposit', 'earn', ${depositResult.status},
+        ${txId}, 'earn_deposit', 'earn', 'pending',
         ${userId}, ${strategy.asset}, ${null},
         ${request.amount}, ${providerRow.id},
-        ${depositResult.providerPositionId},
         ${request.idempotency_key},
         ${request.affiliate_id ?? null},
         ${JSON.stringify({
@@ -169,13 +155,53 @@ export class EarnService {
             strategy_id: request.strategy_id,
             provider_strategy_id: providerStrategyId,
             from_address: request.from_address,
-            deposit_address: depositResult.depositAddress,
             apy_at_deposit: strategy.apy,
             protocol: strategy.protocol,
           },
         })},
         ${now}, ${now}
       )
+      ON CONFLICT (idempotency_key) DO NOTHING
+      RETURNING id
+    `;
+    if (reserved.length === 0) {
+      const [existing] = await this.sql<{ id: string }[]>`
+        SELECT id FROM transactions WHERE idempotency_key = ${request.idempotency_key}
+      `;
+      throw new DuplicateIdempotencyKeyError(existing?.id ?? request.idempotency_key);
+    }
+
+    // Execute deposit on provider only after the reservation succeeded.
+    let depositResult;
+    try {
+      depositResult = await adapter.deposit({
+        strategyId: providerStrategyId,
+        amount: request.amount,
+        fromAddress: request.from_address,
+      });
+    } catch (err) {
+      // Release the reservation so a genuine failure can be retried.
+      await this.sql`DELETE FROM transactions WHERE id = ${txId}`;
+      throw err;
+    }
+
+    // Finalise the reserved transaction with the provider's result.
+    await this.sql`
+      UPDATE transactions
+      SET status = ${depositResult.status},
+          provider_tx_id = ${depositResult.providerPositionId},
+          metadata = ${JSON.stringify({
+            earn: {
+              strategy_id: request.strategy_id,
+              provider_strategy_id: providerStrategyId,
+              from_address: request.from_address,
+              deposit_address: depositResult.depositAddress,
+              apy_at_deposit: strategy.apy,
+              protocol: strategy.protocol,
+            },
+          })},
+          updated_at = ${now}
+      WHERE id = ${txId}
     `;
 
     await this.sql`
@@ -248,13 +274,6 @@ export class EarnService {
       throw new IdempotencyError();
     }
 
-    const [dup] = await this.sql<{ id: string }[]>`
-      SELECT id FROM transactions WHERE idempotency_key = ${request.idempotency_key}
-    `;
-    if (dup) {
-      throw new DuplicateIdempotencyKeyError(dup.id);
-    }
-
     const [row] = await this.sql<(DbEarnPosition & { provider_name: string })[]>`
       SELECT ep.*, p.name AS provider_name
       FROM earn_positions ep
@@ -279,26 +298,23 @@ export class EarnService {
       throw new ValidationError('Position has no provider_position_id — still pending');
     }
 
-    const withdrawResult = await adapter.withdraw({
-      providerPositionId: row.provider_position_id,
-      toAddress: request.to_address,
-    });
-
     const txId = generateUUID();
     const now = nowISO();
 
-    await this.sql`
+    // Reserve the idempotency key *before* the provider withdrawal (issue #15).
+    // The atomic `ON CONFLICT DO NOTHING` guarantees a single withdrawal per key
+    // even under concurrent retries.
+    const reserved = await this.sql<{ id: string }[]>`
       INSERT INTO transactions (
         id, type, domain, status, user_id,
         from_asset, to_asset, amount,
-        provider_id, provider_tx_id,
-        idempotency_key, affiliate_id,
+        provider_id, idempotency_key, affiliate_id,
         metadata, created_at, updated_at
       ) VALUES (
-        ${txId}, 'earn_withdraw', 'earn', ${withdrawResult.status},
+        ${txId}, 'earn_withdraw', 'earn', 'pending',
         ${userId}, ${row.asset}, ${null},
-        ${withdrawResult.withdrawnAmount ?? row.current_value},
-        ${row.provider_id}, ${withdrawResult.txHash},
+        ${row.current_value},
+        ${row.provider_id},
         ${request.idempotency_key},
         ${request.affiliate_id ?? null},
         ${JSON.stringify({
@@ -306,11 +322,49 @@ export class EarnService {
             position_id: request.position_id,
             provider_position_id: row.provider_position_id,
             to_address: request.to_address,
-            tx_hash: withdrawResult.txHash,
           },
         })},
         ${now}, ${now}
       )
+      ON CONFLICT (idempotency_key) DO NOTHING
+      RETURNING id
+    `;
+    if (reserved.length === 0) {
+      const [existing] = await this.sql<{ id: string }[]>`
+        SELECT id FROM transactions WHERE idempotency_key = ${request.idempotency_key}
+      `;
+      throw new DuplicateIdempotencyKeyError(existing?.id ?? request.idempotency_key);
+    }
+
+    // Execute withdrawal on provider only after the reservation succeeded.
+    let withdrawResult;
+    try {
+      withdrawResult = await adapter.withdraw({
+        providerPositionId: row.provider_position_id,
+        toAddress: request.to_address,
+      });
+    } catch (err) {
+      // Release the reservation so a genuine failure can be retried.
+      await this.sql`DELETE FROM transactions WHERE id = ${txId}`;
+      throw err;
+    }
+
+    // Finalise the reserved transaction with the provider's result.
+    await this.sql`
+      UPDATE transactions
+      SET status = ${withdrawResult.status},
+          provider_tx_id = ${withdrawResult.txHash},
+          amount = ${withdrawResult.withdrawnAmount ?? row.current_value},
+          metadata = ${JSON.stringify({
+            earn: {
+              position_id: request.position_id,
+              provider_position_id: row.provider_position_id,
+              to_address: request.to_address,
+              tx_hash: withdrawResult.txHash,
+            },
+          })},
+          updated_at = ${now}
+      WHERE id = ${txId}
     `;
 
     await this.sql`

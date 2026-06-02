@@ -92,14 +92,6 @@ export class PaymentsService {
       throw new ValidationError(`Invalid amount: ${request.amount}`);
     }
 
-    // Idempotency: if a transaction already exists for this key, return its invoice.
-    const [existing] = await this.sql<{ id: string }[]>`
-      SELECT id FROM transactions WHERE idempotency_key = ${request.idempotency_key}
-    `;
-    if (existing) {
-      throw new DuplicateIdempotencyKeyError(existing.id);
-    }
-
     const preferred = (request.metadata?.['provider'] as string | undefined) ?? undefined;
     const provider = this.pickProvider(preferred);
 
@@ -111,17 +103,6 @@ export class PaymentsService {
       throw new PaymentProviderUnavailableError(provider.name);
     }
 
-    // Call provider.
-    const providerResult = await provider.createInvoice({
-      asset: request.asset.toUpperCase(),
-      amount: request.amount,
-      network: request.network,
-      description: request.description,
-      expiresInSeconds: request.expires_in_seconds,
-      callbackUrl: request.callback_url,
-    });
-
-    // Insert transaction + invoice in a single transaction.
     const txId = generateUUID();
     const invoiceId = generateUUID();
     const now = nowISO();
@@ -129,36 +110,80 @@ export class PaymentsService {
     const asset = request.asset.toUpperCase();
     const platformFee = this.revenueService.calculatePlatformFee(request.amount);
 
+    // Reserve the idempotency key *before* calling the provider (issue #15).
+    // The atomic `ON CONFLICT DO NOTHING` ensures two concurrent requests with
+    // the same key produce exactly one provider invoice. The loser short-circuits
+    // here, before any external side effect.
+    const reserved = await this.sql<{ id: string }[]>`
+      INSERT INTO transactions (
+        id, type, domain, status, user_id,
+        from_asset, to_asset, amount,
+        fee_amount, fee_asset,
+        provider_id, idempotency_key, affiliate_id,
+        metadata, created_at, updated_at
+      ) VALUES (
+        ${txId}, 'payment', 'payments', 'pending',
+        ${userId}, ${asset}, ${null}, ${request.amount},
+        ${platformFee}, ${asset},
+        ${providerRow.id}, ${request.idempotency_key},
+        ${request.affiliate_id ?? null},
+        ${JSON.stringify({
+          payment: {
+            invoice_id: invoiceId,
+            description: request.description ?? null,
+            callback_url: request.callback_url ?? null,
+            network,
+            ...(request.metadata ?? {}),
+          },
+        })},
+        ${now}, ${now}
+      )
+      ON CONFLICT (idempotency_key) DO NOTHING
+      RETURNING id
+    `;
+    if (reserved.length === 0) {
+      const [existing] = await this.sql<{ id: string }[]>`
+        SELECT id FROM transactions WHERE idempotency_key = ${request.idempotency_key}
+      `;
+      throw new DuplicateIdempotencyKeyError(existing?.id ?? request.idempotency_key);
+    }
+
+    // Call provider only after the key is reserved.
+    let providerResult;
+    try {
+      providerResult = await provider.createInvoice({
+        asset: request.asset.toUpperCase(),
+        amount: request.amount,
+        network: request.network,
+        description: request.description,
+        expiresInSeconds: request.expires_in_seconds,
+        callbackUrl: request.callback_url,
+      });
+    } catch (err) {
+      // Release the reservation so a genuine failure can be retried.
+      await this.sql`DELETE FROM transactions WHERE id = ${txId}`;
+      throw err;
+    }
+
+    // Finalise the reserved transaction and create the invoice atomically.
     await this.sql.begin(async (tx) => {
       await tx`
-        INSERT INTO transactions (
-          id, type, domain, status, user_id,
-          from_asset, to_asset, amount,
-          fee_amount, fee_asset,
-          provider_id, provider_tx_id,
-          idempotency_key, affiliate_id,
-          metadata, created_at, updated_at
-        ) VALUES (
-          ${txId}, 'payment', 'payments', 'pending',
-          ${userId}, ${asset}, ${null}, ${request.amount},
-          ${platformFee}, ${asset},
-          ${providerRow.id}, ${providerResult.providerInvoiceId},
-          ${request.idempotency_key},
-          ${request.affiliate_id ?? null},
-          ${JSON.stringify({
-            payment: {
-              invoice_id: invoiceId,
-              provider_invoice_id: providerResult.providerInvoiceId,
-              payment_address: providerResult.paymentAddress,
-              expires_at: providerResult.expiresAt,
-              description: request.description ?? null,
-              callback_url: request.callback_url ?? null,
-              network,
-              ...(request.metadata ?? {}),
-            },
-          })},
-          ${now}, ${now}
-        )
+        UPDATE transactions
+        SET provider_tx_id = ${providerResult.providerInvoiceId},
+            metadata = ${JSON.stringify({
+              payment: {
+                invoice_id: invoiceId,
+                provider_invoice_id: providerResult.providerInvoiceId,
+                payment_address: providerResult.paymentAddress,
+                expires_at: providerResult.expiresAt,
+                description: request.description ?? null,
+                callback_url: request.callback_url ?? null,
+                network,
+                ...(request.metadata ?? {}),
+              },
+            })},
+            updated_at = ${now}
+        WHERE id = ${txId}
       `;
 
       await tx`
