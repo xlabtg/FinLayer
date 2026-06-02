@@ -22,11 +22,27 @@ export class MockPaymentProvider implements IPaymentProviderAdapter {
   /** Toggle to force signature verification to fail for testing. */
   public forceInvalidSignature = false;
 
+  /** Number of times createInvoice has been invoked (idempotency tests). */
+  public createInvoiceCalls = 0;
+
+  /** Optional artificial delay (ms) before createInvoice resolves, to widen the concurrency race window. */
+  public createInvoiceDelayMs = 0;
+
+  /** Toggle to force createInvoice to throw, to test reservation rollback. */
+  public forceCreateError = false;
+
   async isHealthy(): Promise<boolean> {
     return true;
   }
 
   async createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult> {
+    this.createInvoiceCalls += 1;
+    if (this.createInvoiceDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.createInvoiceDelayMs));
+    }
+    if (this.forceCreateError) {
+      throw new Error('provider createInvoice failure');
+    }
     const providerInvoiceId = `mock_inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const paymentAddress = `mock_addr_${Math.random().toString(36).slice(2, 16)}`;
     const expiresAt = futureISO(params.expiresInSeconds ?? 3600);

@@ -337,14 +337,6 @@ export class SwapService {
       throw new IdempotencyError();
     }
 
-    // Check for duplicate idempotency key
-    const [existing] = await this.sql<{ id: string }[]>`
-      SELECT id FROM transactions WHERE idempotency_key = ${request.idempotency_key}
-    `;
-    if (existing) {
-      throw new DuplicateIdempotencyKeyError(existing.id);
-    }
-
     // Fetch the quote
     const [quoteRow] = await this.sql<DbSwapQuote[]>`
       SELECT sq.*, p.name AS provider_name
@@ -367,6 +359,47 @@ export class SwapService {
       throw new ValidationError(`Provider ${quoteRow.provider_name} is not available`);
     }
 
+    const txId = generateUUID();
+    const now = nowISO();
+
+    // Reserve the idempotency key *before* touching the provider (issue #15).
+    // `ON CONFLICT DO NOTHING` makes the reservation atomic: two concurrent
+    // requests with the same key can't both pass — exactly one row is inserted,
+    // so exactly one request reaches the provider. The loser short-circuits.
+    const reserved = await this.sql<{ id: string }[]>`
+      INSERT INTO transactions (
+        id, type, domain, status, user_id,
+        from_asset, to_asset, amount,
+        provider_id, idempotency_key, affiliate_id,
+        metadata, created_at, updated_at
+      ) VALUES (
+        ${txId}, 'swap', 'swap', 'pending', ${userId},
+        ${quoteRow.from_asset}, ${quoteRow.to_asset}, ${quoteRow.from_amount},
+        ${quoteRow.provider_id}, ${request.idempotency_key},
+        ${request.affiliate_id ?? null},
+        ${JSON.stringify({
+          swap: {
+            quote_id: request.quote_id,
+            provider_quote_id: quoteRow.provider_quote_id,
+            to_amount: quoteRow.to_amount,
+            rate: quoteRow.rate,
+            recipient_address: request.recipient_address,
+            refund_address: request.refund_address ?? null,
+          },
+        })},
+        ${now}, ${now}
+      )
+      ON CONFLICT (idempotency_key) DO NOTHING
+      RETURNING id
+    `;
+    if (reserved.length === 0) {
+      // Another request already holds this key — surface the existing tx id.
+      const [existing] = await this.sql<{ id: string }[]>`
+        SELECT id FROM transactions WHERE idempotency_key = ${request.idempotency_key}
+      `;
+      throw new DuplicateIdempotencyKeyError(existing?.id ?? request.idempotency_key);
+    }
+
     // Execute with provider; record outcome for future routing decisions.
     let executeResult;
     try {
@@ -378,40 +411,30 @@ export class SwapService {
       this.reliability.recordSuccess(provider.name);
     } catch (err) {
       this.reliability.recordFailure(provider.name);
+      // Release the reservation so a genuine failure can be retried with the
+      // same key (the provider never performed an operation here).
+      await this.sql`DELETE FROM transactions WHERE id = ${txId}`;
       throw err;
     }
 
-    // Create transaction record
-    const txId = generateUUID();
-    const now = nowISO();
-
+    // Finalise the reserved transaction with the provider's result.
     await this.sql`
-      INSERT INTO transactions (
-        id, type, domain, status, user_id,
-        from_asset, to_asset, amount,
-        provider_id, provider_tx_id,
-        idempotency_key, affiliate_id,
-        metadata, created_at, updated_at
-      ) VALUES (
-        ${txId}, 'swap', 'swap', ${executeResult.status},
-        ${userId}, ${quoteRow.from_asset}, ${quoteRow.to_asset},
-        ${quoteRow.from_amount}, ${quoteRow.provider_id},
-        ${executeResult.providerTxId},
-        ${request.idempotency_key},
-        ${request.affiliate_id ?? null},
-        ${JSON.stringify({
-          swap: {
-            quote_id: request.quote_id,
-            provider_quote_id: quoteRow.provider_quote_id,
-            to_amount: quoteRow.to_amount,
-            rate: quoteRow.rate,
-            recipient_address: request.recipient_address,
-            refund_address: request.refund_address ?? null,
-            deposit_address: executeResult.depositAddress,
-          },
-        })},
-        ${now}, ${now}
-      )
+      UPDATE transactions
+      SET status = ${executeResult.status},
+          provider_tx_id = ${executeResult.providerTxId},
+          metadata = ${JSON.stringify({
+            swap: {
+              quote_id: request.quote_id,
+              provider_quote_id: quoteRow.provider_quote_id,
+              to_amount: quoteRow.to_amount,
+              rate: quoteRow.rate,
+              recipient_address: request.recipient_address,
+              refund_address: request.refund_address ?? null,
+              deposit_address: executeResult.depositAddress,
+            },
+          })},
+          updated_at = ${now}
+      WHERE id = ${txId}
     `;
 
     // Calculate and store revenue event

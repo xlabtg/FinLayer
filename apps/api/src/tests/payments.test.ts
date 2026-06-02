@@ -126,6 +126,80 @@ describe('Payments Flow', () => {
     });
   });
 
+  describe('Idempotency under concurrency (issue #15)', () => {
+    test('concurrent requests with the same key call the provider exactly once', async () => {
+      const key = `inv-${generateUUID()}`;
+      // Widen the race window so both requests overlap inside createInvoice.
+      mockProvider.createInvoiceDelayMs = 25;
+
+      const results = await Promise.allSettled([
+        paymentsService.createInvoice(userId, {
+          asset: 'USDC',
+          amount: '100',
+          idempotency_key: key,
+        }),
+        paymentsService.createInvoice(userId, {
+          asset: 'USDC',
+          amount: '100',
+          idempotency_key: key,
+        }),
+      ]);
+
+      // Exactly one provider call — the core acceptance criterion.
+      expect(mockProvider.createInvoiceCalls).toBe(1);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+        DuplicateIdempotencyKeyError
+      );
+
+      // Only one transaction row and one invoice persisted for the key.
+      const txs = (mockSql._tables.get('transactions') ?? []).filter(
+        (t) => t['idempotency_key'] === key
+      );
+      expect(txs.length).toBe(1);
+      const invoices = mockSql._tables.get('invoices') ?? [];
+      expect(invoices.length).toBe(1);
+    });
+
+    test('provider failure releases the reservation so the key can be retried', async () => {
+      const key = `inv-${generateUUID()}`;
+
+      // First attempt: provider throws — reservation must be rolled back.
+      mockProvider.forceCreateError = true;
+      await expect(
+        paymentsService.createInvoice(userId, {
+          asset: 'USDC',
+          amount: '100',
+          idempotency_key: key,
+        })
+      ).rejects.toThrow();
+
+      let txs = (mockSql._tables.get('transactions') ?? []).filter(
+        (t) => t['idempotency_key'] === key
+      );
+      expect(txs.length).toBe(0);
+
+      // Retry with the same key now succeeds.
+      mockProvider.forceCreateError = false;
+      const invoice = await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: key,
+      });
+      expect(invoice.id).toBeDefined();
+      expect(mockProvider.createInvoiceCalls).toBe(2);
+
+      txs = (mockSql._tables.get('transactions') ?? []).filter(
+        (t) => t['idempotency_key'] === key
+      );
+      expect(txs.length).toBe(1);
+    });
+  });
+
   describe('GET /v1/payments/invoice/:id', () => {
     test('returns invoice for owning user', async () => {
       const created = await paymentsService.createInvoice(userId, {

@@ -23,6 +23,15 @@ export class MockSwapProvider implements ISwapProviderAdapter {
   /** Toggle to force signature verification to fail for testing. */
   public forceInvalidSignature = false;
 
+  /** Number of times executeSwap has been invoked (idempotency tests). */
+  public executeSwapCalls = 0;
+
+  /** Optional artificial delay (ms) before executeSwap resolves, to widen the concurrency race window. */
+  public executeDelayMs = 0;
+
+  /** Toggle to force executeSwap to throw, to test reservation rollback. */
+  public forceExecuteError = false;
+
   private txStatuses = new Map<string, SwapStatusResult['status']>();
 
   async isHealthy(): Promise<boolean> {
@@ -64,6 +73,13 @@ export class MockSwapProvider implements ISwapProviderAdapter {
   }
 
   async executeSwap(params: SwapExecuteParams): Promise<SwapExecuteResult> {
+    this.executeSwapCalls += 1;
+    if (this.executeDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.executeDelayMs));
+    }
+    if (this.forceExecuteError) {
+      throw new Error('provider execute failure');
+    }
     const txId = `mock_tx_${Date.now()}`;
     this.txStatuses.set(txId, 'pending');
 

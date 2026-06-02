@@ -21,6 +21,26 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
     return tables.get(name)!;
   };
 
+  // Split a comma-separated clause at the top level only, so commas inside
+  // function calls like COALESCE(?, col) don't break parsing.
+  const splitTopLevel = (str: string): string[] => {
+    const out: string[] = [];
+    let depth = 0;
+    let cur = '';
+    for (const ch of str) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) {
+        out.push(cur);
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  };
+
   // Seed providers table
   initTable('providers').push({
     id: generateUUID(),
@@ -236,80 +256,64 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('INSERT INTO TRANSACTIONS')) {
-        // Transaction INSERTs have different value layouts for swap vs payment vs earn
-        // because `type`/`domain`/`status` may be template literals or bound values.
-        const isPayment = query.includes("'PAYMENT'") && query.includes("'PAYMENTS'");
-        const isEarn = query.includes("'EARN_DEPOSIT'") || query.includes("'EARN_WITHDRAW'");
-        let row: MockRow;
-        if (isPayment) {
-          // [id, userId, asset, null, amount, fee, asset, providerId, providerTxId, idem, affId, meta, now, now]
-          row = {
-            id: values[0],
-            type: 'payment',
-            domain: 'payments',
-            status: 'pending',
-            user_id: values[1],
-            from_asset: values[2],
-            to_asset: values[3],
-            amount: values[4],
-            fee_amount: values[5],
-            fee_asset: values[6],
-            provider_id: values[7],
-            provider_tx_id: values[8],
-            idempotency_key: values[9],
-            affiliate_id: values[10],
-            metadata: typeof values[11] === 'string' ? JSON.parse(values[11] as string) : values[11],
-            created_at: new Date(values[12] as string),
-            updated_at: new Date(values[13] as string),
-            revenue_event_id: null,
-            result_amount: null,
-          };
-        } else if (isEarn) {
-          // earn layout: type/domain are SQL literals; [id, status, userId, from, to, amount, providerId, providerTxId, idem, affId, meta, now, now]
-          const typeMatch = query.match(/VALUES\s*\(\s*\?\s*,\s*'([A-Z_]+)'\s*,\s*'([A-Z_]+)'/);
-          const type = typeMatch ? typeMatch[1]!.toLowerCase() : 'earn_deposit';
-          const domain = typeMatch ? typeMatch[2]!.toLowerCase() : 'earn';
-          const rawMetadata = values[10];
-          row = {
-            id: values[0],
-            type,
-            domain,
-            status: values[1],
-            user_id: values[2],
-            from_asset: values[3],
-            to_asset: values[4],
-            amount: values[5],
-            provider_id: values[6],
-            provider_tx_id: values[7],
-            idempotency_key: values[8],
-            affiliate_id: values[9],
-            metadata: typeof rawMetadata === 'string' ? JSON.parse(rawMetadata) : rawMetadata,
-            created_at: new Date(values[11] as string),
-            updated_at: new Date(values[12] as string),
-            revenue_event_id: null,
-          };
-        } else {
-          // swap layout: [id, status, userId, from, to, amount, providerId, providerTxId, idem, affId, meta, now, now]
-          row = {
-            id: values[0],
-            type: 'swap',
-            domain: 'swap',
-            status: values[1],
-            user_id: values[2],
-            from_asset: values[3],
-            to_asset: values[4],
-            amount: values[5],
-            provider_id: values[6],
-            provider_tx_id: values[7],
-            idempotency_key: values[8],
-            affiliate_id: values[9],
-            metadata: typeof values[10] === 'string' ? JSON.parse(values[10] as string) : values[10],
-            created_at: new Date(values[11] as string),
-            updated_at: new Date(values[12] as string),
-            revenue_event_id: null,
-          };
+        // Generic column-aware parser. Bound `${...}` values arrive as `?`
+        // placeholders in `query` (and as entries in `values`), while inline
+        // SQL literals (e.g. 'swap', 'pending') stay in the query text. This
+        // tolerates any column order/subset — including the partial reservation
+        // INSERTs and the `ON CONFLICT (idempotency_key) DO NOTHING` clause used
+        // by the TOCTOU fix.
+        const colMatch = query.match(/INSERT INTO TRANSACTIONS\s*\(([\s\S]*?)\)\s*VALUES/);
+        const cols = (colMatch?.[1] ?? '')
+          .split(',')
+          .map((c) => c.trim().toLowerCase());
+
+        const afterValues = query.slice(query.indexOf('VALUES') + 'VALUES'.length);
+        const open = afterValues.indexOf('(');
+        const close = afterValues.indexOf(')', open);
+        const valTokens = splitTopLevel(afterValues.slice(open + 1, close)).map((t) => t.trim());
+
+        const row: MockRow = {};
+        let vi = 0;
+        for (let i = 0; i < cols.length; i++) {
+          const token = valTokens[i] ?? '?';
+          let val: unknown;
+          if (token === '?') {
+            val = values[vi++];
+          } else if (token === 'NULL') {
+            val = null;
+          } else if (token.startsWith("'")) {
+            // Inline string literal — these are only type/domain/status, which
+            // are lowercase in the DB (the query has been upper-cased).
+            val = token.slice(1, -1).toLowerCase();
+          } else {
+            val = token;
+          }
+          row[cols[i]!] = val;
         }
-        initTable('transactions').push(row);
+
+        // Normalise common columns.
+        if (typeof row['metadata'] === 'string') {
+          row['metadata'] = JSON.parse(row['metadata'] as string);
+        }
+        for (const dateCol of ['created_at', 'updated_at']) {
+          if (typeof row[dateCol] === 'string') row[dateCol] = new Date(row[dateCol] as string);
+        }
+        // Fill in columns the services read back later but didn't set here.
+        for (const def of ['to_asset', 'provider_tx_id', 'revenue_event_id', 'result_amount', 'fee_amount', 'fee_asset', 'affiliate_id']) {
+          if (!(def in row)) row[def] = null;
+        }
+
+        const txTable = initTable('transactions');
+        // ON CONFLICT (idempotency_key) DO NOTHING — a duplicate reservation
+        // inserts nothing and returns no rows, exactly like Postgres.
+        if (
+          query.includes('ON CONFLICT') &&
+          row['idempotency_key'] != null &&
+          txTable.some((r) => r['idempotency_key'] === row['idempotency_key'])
+        ) {
+          return Promise.resolve([]);
+        }
+        txTable.push(row);
         return Promise.resolve([row]);
       }
 
@@ -336,31 +340,58 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return Promise.resolve([row]);
       }
 
-      if (query.startsWith('UPDATE TRANSACTIONS') && query.includes('REVENUE_EVENT_ID')) {
-        const revenueEventId = values[0];
-        const txId = values[1];
+      if (query.startsWith('DELETE FROM TRANSACTIONS')) {
+        // Used to release an idempotency reservation when the provider call
+        // fails, so the same key can be retried.
+        const id = values[0];
         const rows = initTable('transactions');
-        const row = rows.find(r => r['id'] === txId);
-        if (row) row['revenue_event_id'] = revenueEventId;
+        const idx = rows.findIndex((r) => r['id'] === id);
+        if (idx >= 0) rows.splice(idx, 1);
         return Promise.resolve([]);
       }
 
-      if (query.startsWith('UPDATE TRANSACTIONS') && query.includes('STATUS')) {
-        // Two shapes:
-        //   swap:    SET status = ?, updated_at = NOW() WHERE id = ?         → [status, txId]
-        //   payment: SET status = ?, result_amount = COALESCE(?, …), updated_at = NOW() WHERE id = ? → [status, paidAmount, txId]
-        const hasResultAmount = query.includes('RESULT_AMOUNT');
-        const status = values[0];
-        const resultAmount = hasResultAmount ? values[1] : undefined;
-        const txId = hasResultAmount ? values[2] : values[1];
-        const rows = initTable('transactions');
-        const row = rows.find(r => r['id'] === txId);
-        if (row) {
-          row['status'] = status;
-          if (hasResultAmount && resultAmount !== null && resultAmount !== undefined) {
-            row['result_amount'] = resultAmount;
+      if (query.startsWith('UPDATE TRANSACTIONS')) {
+        // Generic SET parser: handles `col = ?`, `col = NOW()` and
+        // `col = COALESCE(?, col)`, in any order. The single WHERE placeholder
+        // (`WHERE id = ?`) is the last bound value consumed.
+        const setStr = query.slice(query.indexOf(' SET ') + 5, query.indexOf(' WHERE '));
+        const assignments = splitTopLevel(setStr);
+        const updates: { col: string; coalesce: boolean; value: unknown }[] = [];
+        let vi = 0;
+        for (const assignment of assignments) {
+          const eq = assignment.indexOf('=');
+          const col = assignment.slice(0, eq).trim().toLowerCase();
+          const expr = assignment.slice(eq + 1).trim();
+          if (expr === '?') {
+            updates.push({ col, coalesce: false, value: values[vi++] });
+          } else if (expr.startsWith('NOW(')) {
+            updates.push({ col, coalesce: false, value: new Date() });
+          } else if (expr.startsWith('COALESCE')) {
+            updates.push({ col, coalesce: true, value: values[vi++] });
+          } else if (expr === 'NULL') {
+            updates.push({ col, coalesce: false, value: null });
+          } else if (expr.startsWith("'")) {
+            updates.push({ col, coalesce: false, value: expr.slice(1, -1).toLowerCase() });
+          } else {
+            updates.push({ col, coalesce: false, value: expr });
           }
-          row['updated_at'] = new Date();
+        }
+        const txId = values[vi];
+        const row = initTable('transactions').find((r) => r['id'] === txId);
+        if (row) {
+          for (const u of updates) {
+            if (u.coalesce && (u.value === null || u.value === undefined)) continue;
+            if (u.col === 'metadata' && typeof u.value === 'string') {
+              row[u.col] = JSON.parse(u.value);
+            } else if (
+              (u.col === 'created_at' || u.col === 'updated_at') &&
+              typeof u.value === 'string'
+            ) {
+              row[u.col] = new Date(u.value);
+            } else {
+              row[u.col] = u.value;
+            }
+          }
         }
         return Promise.resolve([]);
       }

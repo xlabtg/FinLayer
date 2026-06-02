@@ -199,6 +199,79 @@ describe('Earn Service — Deposit', () => {
     expect(result.position.unlocks_at).toBeTruthy();
     expect(new Date(result.position.unlocks_at!).getTime()).toBeGreaterThan(Date.now());
   });
+
+  test('concurrent deposits with the same key call the provider exactly once (issue #15)', async () => {
+    const key = generateUUID();
+    // Widen the race window so both requests overlap inside deposit().
+    mockProvider.depositDelayMs = 25;
+
+    const results = await Promise.allSettled([
+      service.deposit(userId, {
+        strategy_id: usdcStrategyId,
+        amount: '100',
+        from_address: '0xAliceAddress',
+        idempotency_key: key,
+      }),
+      service.deposit(userId, {
+        strategy_id: usdcStrategyId,
+        amount: '100',
+        from_address: '0xAliceAddress',
+        idempotency_key: key,
+      }),
+    ]);
+
+    // Exactly one provider call — the core acceptance criterion.
+    expect(mockProvider.depositCalls).toBe(1);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled.length).toBe(1);
+    expect(rejected.length).toBe(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+      DuplicateIdempotencyKeyError
+    );
+
+    const txs = (mockSql._tables.get('transactions') ?? []).filter(
+      (t) => t['idempotency_key'] === key
+    );
+    expect(txs.length).toBe(1);
+  });
+
+  test('deposit provider failure releases the reservation so the key can be retried (issue #15)', async () => {
+    const key = generateUUID();
+
+    // First attempt: provider throws — reservation must be rolled back.
+    mockProvider.forceDepositError = true;
+    await expect(
+      service.deposit(userId, {
+        strategy_id: usdcStrategyId,
+        amount: '100',
+        from_address: '0xAliceAddress',
+        idempotency_key: key,
+      })
+    ).rejects.toThrow();
+
+    let txs = (mockSql._tables.get('transactions') ?? []).filter(
+      (t) => t['idempotency_key'] === key
+    );
+    expect(txs.length).toBe(0);
+
+    // Retry with the same key now succeeds.
+    mockProvider.forceDepositError = false;
+    const result = await service.deposit(userId, {
+      strategy_id: usdcStrategyId,
+      amount: '100',
+      from_address: '0xAliceAddress',
+      idempotency_key: key,
+    });
+    expect(result.transaction_id).toBeDefined();
+    expect(mockProvider.depositCalls).toBe(2);
+
+    txs = (mockSql._tables.get('transactions') ?? []).filter(
+      (t) => t['idempotency_key'] === key
+    );
+    expect(txs.length).toBe(1);
+  });
 });
 
 describe('Earn Service — Positions & Withdraw', () => {
@@ -304,6 +377,95 @@ describe('Earn Service — Positions & Withdraw', () => {
         idempotency_key: generateUUID(),
       })
     ).rejects.toBeInstanceOf(EarnPositionLockedError);
+  });
+
+  test('concurrent withdrawals with the same key call the provider exactly once (issue #15)', async () => {
+    const dep = await service.deposit(userId, {
+      strategy_id: usdcStrategyId,
+      amount: '100',
+      from_address: '0xAliceAddress',
+      idempotency_key: generateUUID(),
+    });
+    const positions = mockSql._tables.get('earn_positions') ?? [];
+    const posRow = positions.find((p) => p['id'] === dep.position.id)!;
+    posRow['status'] = 'active';
+
+    const key = generateUUID();
+    // Widen the race window so both requests overlap inside withdraw().
+    mockProvider.withdrawDelayMs = 25;
+
+    const results = await Promise.allSettled([
+      service.withdraw(userId, {
+        position_id: dep.position.id,
+        to_address: '0xReceiver',
+        idempotency_key: key,
+      }),
+      service.withdraw(userId, {
+        position_id: dep.position.id,
+        to_address: '0xReceiver',
+        idempotency_key: key,
+      }),
+    ]);
+
+    // Exactly one provider call — the core acceptance criterion.
+    expect(mockProvider.withdrawCalls).toBe(1);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled.length).toBe(1);
+    expect(rejected.length).toBe(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+      DuplicateIdempotencyKeyError
+    );
+
+    const txs = (mockSql._tables.get('transactions') ?? []).filter(
+      (t) => t['idempotency_key'] === key
+    );
+    expect(txs.length).toBe(1);
+  });
+
+  test('withdraw provider failure releases the reservation so the key can be retried (issue #15)', async () => {
+    const dep = await service.deposit(userId, {
+      strategy_id: usdcStrategyId,
+      amount: '100',
+      from_address: '0xAliceAddress',
+      idempotency_key: generateUUID(),
+    });
+    const positions = mockSql._tables.get('earn_positions') ?? [];
+    const posRow = positions.find((p) => p['id'] === dep.position.id)!;
+    posRow['status'] = 'active';
+
+    const key = generateUUID();
+
+    // First attempt: provider throws — reservation must be rolled back.
+    mockProvider.forceWithdrawError = true;
+    await expect(
+      service.withdraw(userId, {
+        position_id: dep.position.id,
+        to_address: '0xReceiver',
+        idempotency_key: key,
+      })
+    ).rejects.toThrow();
+
+    let txs = (mockSql._tables.get('transactions') ?? []).filter(
+      (t) => t['idempotency_key'] === key
+    );
+    expect(txs.length).toBe(0);
+
+    // Retry with the same key now succeeds.
+    mockProvider.forceWithdrawError = false;
+    const res = await service.withdraw(userId, {
+      position_id: dep.position.id,
+      to_address: '0xReceiver',
+      idempotency_key: key,
+    });
+    expect(res.transaction_id).toBeDefined();
+    expect(mockProvider.withdrawCalls).toBe(2);
+
+    txs = (mockSql._tables.get('transactions') ?? []).filter(
+      (t) => t['idempotency_key'] === key
+    );
+    expect(txs.length).toBe(1);
   });
 });
 
