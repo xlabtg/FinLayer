@@ -13,8 +13,9 @@
  *  - Uses setInterval (Bun-compatible) rather than an external cron runner to
  *    avoid extra infrastructure in Phase 4.
  *  - Idempotent: a payout batch only "consumes" revenue events via
- *    affiliate_payout_items, and those events get distributed_at set inside
- *    the same transaction. Re-runs therefore cannot double-pay.
+ *    affiliate_payout_items, and those events are locked with
+ *    FOR UPDATE SKIP LOCKED before distributed_at is set inside the same
+ *    transaction. Parallel scheduler instances therefore cannot double-pay.
  *  - Enabled via PAYOUT_SCHEDULER_ENABLED=true (default: false). Interval via
  *    PAYOUT_INTERVAL_MS (default: 1 hour).
  */
@@ -42,6 +43,8 @@ interface PendingRevenueEvent {
   total_fee: string;
   affiliate_share: string;
 }
+
+type PayoutCreationResult = 'created' | 'skipped' | 'empty';
 
 export interface PayoutRunSummary {
   scanned: number;
@@ -120,12 +123,12 @@ export class AffiliatePayoutScheduler {
       let created = 0;
       let skipped = 0;
       for (const row of eligible) {
-        if (parseFloat(row.total_pending) < this.minPayoutAmount) {
+        const result = await this.createPayout(row);
+        if (result === 'created') {
+          created++;
+        } else if (result === 'skipped') {
           skipped++;
-          continue;
         }
-        await this.createPayout(row);
-        created++;
       }
 
       const summary: PayoutRunSummary = {
@@ -140,26 +143,41 @@ export class AffiliatePayoutScheduler {
     }
   }
 
-  private async createPayout(row: AffiliateWithPending): Promise<void> {
-    const events = await this.sql<PendingRevenueEvent[]>`
-      SELECT id, total_fee, affiliate_share
-      FROM revenue_events
-      WHERE affiliate_id = ${row.affiliate_id}
-        AND distributed_at IS NULL
-      ORDER BY created_at ASC
-    `;
-
-    if (events.length === 0) return;
-
+  private async createPayout(row: AffiliateWithPending): Promise<PayoutCreationResult> {
     const payoutId = generateUUID();
+    let createdBatch: { amount: string; eventCount: number } | null = null;
+    let result: PayoutCreationResult = 'empty';
 
     await this.sql.begin(async (tx) => {
+      const events = await tx<PendingRevenueEvent[]>`
+        SELECT id, total_fee, affiliate_share
+        FROM revenue_events
+        WHERE affiliate_id = ${row.affiliate_id}
+          AND distributed_at IS NULL
+        ORDER BY created_at ASC
+        FOR UPDATE SKIP LOCKED
+      `;
+
+      if (events.length === 0) {
+        result = 'empty';
+        return;
+      }
+
+      const totalPending = events.reduce((acc, ev) => {
+        return acc + (parseFloat(ev.total_fee) * parseFloat(ev.affiliate_share));
+      }, 0).toFixed(8);
+
+      if (parseFloat(totalPending) < this.minPayoutAmount) {
+        result = 'skipped';
+        return;
+      }
+
       await tx`
         INSERT INTO affiliate_payouts (
           id, affiliate_id, amount, asset,
           payout_address, status, event_count, scheduled_at
         ) VALUES (
-          ${payoutId}, ${row.affiliate_id}, ${row.total_pending}, ${this.payoutAsset},
+          ${payoutId}, ${row.affiliate_id}, ${totalPending}, ${this.payoutAsset},
           ${row.payout_address}, 'pending', ${events.length}, NOW()
         )
       `;
@@ -177,17 +195,27 @@ export class AffiliatePayoutScheduler {
 
       await tx`
         UPDATE affiliates
-        SET total_paid_out = total_paid_out + ${row.total_pending},
+        SET total_paid_out = total_paid_out + ${totalPending},
             updated_at = NOW()
         WHERE id = ${row.affiliate_id}
       `;
+
+      createdBatch = {
+        amount: totalPending,
+        eventCount: events.length,
+      };
+      result = 'created';
     });
 
-    logger.info('Affiliate payout batch created', {
-      payoutId,
-      affiliateId: row.affiliate_id,
-      amount: row.total_pending,
-      eventCount: events.length,
-    });
+    if (createdBatch) {
+      logger.info('Affiliate payout batch created', {
+        payoutId,
+        affiliateId: row.affiliate_id,
+        amount: createdBatch.amount,
+        eventCount: createdBatch.eventCount,
+      });
+    }
+
+    return result;
   }
 }

@@ -16,6 +16,7 @@ interface MockRow {
  */
 export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
   const tables = new Map<string, MockRow[]>();
+  const lockedRevenueEventIds = new Set<string>();
   const initTable = (name: string) => {
     if (!tables.has(name)) tables.set(name, []);
     return tables.get(name)!;
@@ -71,7 +72,12 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
 
   // Create a simple SQL mock
   const mockSql = new Proxy(
-    function (strings: TemplateStringsArray, ...values: unknown[]) {
+    function (
+      this: { _revenueEventLocks?: Set<string> } | void,
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) {
+      const transactionLocks = this?._revenueEventLocks;
       // Parse the SQL to determine the operation
       const query = strings.join('?').trim().toUpperCase();
 
@@ -535,9 +541,17 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
 
       if (query.startsWith('SELECT ID, TOTAL_FEE, AFFILIATE_SHARE') && query.includes('REVENUE_EVENTS')) {
         const [affiliateId] = values as [string];
-        const events = initTable('revenue_events').filter(e =>
+        let events = initTable('revenue_events').filter(e =>
           e['affiliate_id'] === affiliateId && !e['distributed_at']
         );
+        if (query.includes('FOR UPDATE') && query.includes('SKIP LOCKED')) {
+          events = events.filter(e => !lockedRevenueEventIds.has(String(e['id'])));
+          for (const event of events) {
+            const eventId = String(event['id']);
+            lockedRevenueEventIds.add(eventId);
+            transactionLocks?.add(eventId);
+          }
+        }
         return Promise.resolve(events.map(e => ({
           id: e['id'],
           total_fee: e['total_fee'],
@@ -709,7 +723,17 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       get(target, prop) {
         if (prop === '_tables') return tables;
         if (prop === 'begin') {
-          return async (fn: (tx: unknown) => Promise<unknown>) => fn(target);
+          return async (fn: (tx: unknown) => Promise<unknown>) => {
+            const transactionLocks = new Set<string>();
+            const tx = target.bind({ _revenueEventLocks: transactionLocks });
+            try {
+              return await fn(tx);
+            } finally {
+              for (const eventId of transactionLocks) {
+                lockedRevenueEventIds.delete(eventId);
+              }
+            }
+          };
         }
         if (prop === 'unsafe') {
           return (_sql: string) => Promise.resolve([]);
@@ -717,7 +741,7 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         if (prop === 'end') {
           return () => Promise.resolve();
         }
-        return (target as Record<string, unknown>)[prop as string];
+        return (target as unknown as Record<string, unknown>)[prop as string];
       },
     }
   ) as SQL & { _tables: Map<string, MockRow[]> };

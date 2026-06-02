@@ -121,6 +121,32 @@ describe('AffiliatePayoutScheduler', () => {
     expect(sql._tables.get('affiliate_payouts')!.length).toBe(1);
   });
 
+  test('parallel scheduler instances do not double-pay the same revenue events', async () => {
+    const aff = seedAffiliate(sql);
+    const ev1 = seedRevenueEvent(sql, aff, { total_fee: '100', affiliate_share: '0.4' });
+    const ev2 = seedRevenueEvent(sql, aff, { total_fee: '50', affiliate_share: '0.4' });
+
+    const schedulerA = new AffiliatePayoutScheduler(sql as never, { minPayoutAmount: 0 });
+    const schedulerB = new AffiliatePayoutScheduler(sql as never, { minPayoutAmount: 0 });
+
+    const [runA, runB] = await Promise.all([
+      schedulerA.runOnce(),
+      schedulerB.runOnce(),
+    ]);
+
+    expect(runA.batches_created + runB.batches_created).toBe(1);
+
+    const payouts = sql._tables.get('affiliate_payouts')!;
+    expect(payouts.length).toBe(1);
+
+    const items = sql._tables.get('affiliate_payout_items')!;
+    expect(items.length).toBe(2);
+    expect(items.map(i => i['revenue_event_id']).sort()).toEqual([ev1, ev2].sort());
+
+    const events = sql._tables.get('revenue_events')!;
+    expect(events.every(e => e['distributed_at'])).toBe(true);
+  });
+
   test('runOnce ignores already-distributed revenue events', async () => {
     const aff = seedAffiliate(sql);
     seedRevenueEvent(sql, aff, {
