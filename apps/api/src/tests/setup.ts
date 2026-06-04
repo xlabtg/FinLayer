@@ -184,6 +184,36 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return Promise.resolve(rows);
       }
 
+      // ─── Affiliates ────────────────────────────────────────────────────────
+
+      if (query.startsWith('SELECT') && query.includes('FROM AFFILIATES') && query.includes('WHERE ID =')) {
+        const affiliateId = values[0];
+        const rows = initTable('affiliates').filter(r => r['id'] === affiliateId);
+        return Promise.resolve(rows);
+      }
+
+      if (query.startsWith('SELECT') && query.includes('FROM AFFILIATES') && query.includes('WHERE USER_ID =')) {
+        const userId = values[0];
+        const rows = initTable('affiliates').filter(r => r['user_id'] === userId);
+        return Promise.resolve(rows);
+      }
+
+      if (query.startsWith('INSERT INTO AFFILIATES')) {
+        const row: MockRow = {
+          id: values[0],
+          user_id: values[1],
+          code: values[2],
+          commission_rate: values[3],
+          payout_address: null,
+          total_earned: '0',
+          total_paid_out: '0',
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+        initTable('affiliates').push(row);
+        return Promise.resolve([row]);
+      }
+
       // ─── Earn Positions ─────────────────────────────────────────────────────
       if (query.startsWith('INSERT INTO EARN_POSITIONS')) {
         const row: MockRow = {
@@ -447,6 +477,19 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('UPDATE AFFILIATES')) {
+        const amount = parseFloat(String(values[0] ?? '0'));
+        const affiliateId = values[1];
+        const row = initTable('affiliates').find(r => r['id'] === affiliateId);
+        if (row && query.includes('TOTAL_EARNED')) {
+          const current = parseFloat(String(row['total_earned'] ?? '0'));
+          row['total_earned'] = (current + amount).toFixed(8);
+          row['updated_at'] = new Date();
+        }
+        if (row && query.includes('TOTAL_PAID_OUT')) {
+          const current = parseFloat(String(row['total_paid_out'] ?? '0'));
+          row['total_paid_out'] = (current + amount).toFixed(8);
+          row['updated_at'] = new Date();
+        }
         return Promise.resolve([]);
       }
 

@@ -359,6 +359,11 @@ export class SwapService {
       throw new ValidationError(`Provider ${quoteRow.provider_name} is not available`);
     }
 
+    const affiliateId = await this.revenueService.validateAffiliateAttribution(
+      request.affiliate_id,
+      userId
+    );
+
     const txId = generateUUID();
     const now = nowISO();
 
@@ -376,7 +381,7 @@ export class SwapService {
         ${txId}, 'swap', 'swap', 'pending', ${userId},
         ${quoteRow.from_asset}, ${quoteRow.to_asset}, ${quoteRow.from_amount},
         ${quoteRow.provider_id}, ${request.idempotency_key},
-        ${request.affiliate_id ?? null},
+        ${affiliateId},
         ${JSON.stringify({
           swap: {
             quote_id: request.quote_id,
@@ -443,7 +448,8 @@ export class SwapService {
       domain: 'swap',
       totalFee: quoteRow.platform_fee,
       feeAsset: quoteRow.from_asset,
-      affiliateId: request.affiliate_id,
+      affiliateId,
+      payerUserId: userId,
     });
 
     // Link revenue event to transaction
@@ -466,7 +472,8 @@ export class SwapService {
       executeResult.depositAddress,
       request,
       revenueEventId,
-      now
+      now,
+      affiliateId
     );
   }
 
@@ -612,7 +619,8 @@ export class SwapService {
     depositAddress: string,
     request: SwapExecuteRequest,
     revenueEventId: string,
-    now: string
+    now: string,
+    affiliateId: string | null
   ): SwapTransaction {
     const quoteObj: SwapQuote = {
       id: request.quote_id,
@@ -643,7 +651,7 @@ export class SwapService {
       refund_address: request.refund_address ?? null,
       deposit_address: depositAddress,
       provider_tx_id: null,
-      affiliate_id: request.affiliate_id ?? null,
+      affiliate_id: affiliateId,
       revenue_event_id: revenueEventId,
       webhook_url: webhookUrl,
       created_at: now,

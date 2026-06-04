@@ -134,6 +134,10 @@ export class EarnService {
       strategy.lockPeriodDays > 0
         ? new Date(Date.now() + strategy.lockPeriodDays * 86_400_000).toISOString()
         : null;
+    const affiliateId = await this.revenueService.validateAffiliateAttribution(
+      request.affiliate_id,
+      userId
+    );
 
     // Reserve the idempotency key *before* the provider deposit (issue #15).
     // The atomic `ON CONFLICT DO NOTHING` guarantees a single deposit per key
@@ -149,7 +153,7 @@ export class EarnService {
         ${userId}, ${strategy.asset}, ${null},
         ${request.amount}, ${providerRow.id},
         ${request.idempotency_key},
-        ${request.affiliate_id ?? null},
+        ${affiliateId},
         ${JSON.stringify({
           earn: {
             strategy_id: request.strategy_id,
@@ -228,7 +232,8 @@ export class EarnService {
       domain: 'earn',
       totalFee: platformFee,
       feeAsset: strategy.asset,
-      affiliateId: request.affiliate_id,
+      affiliateId,
+      payerUserId: userId,
     });
 
     await this.sql`
@@ -298,6 +303,11 @@ export class EarnService {
       throw new ValidationError('Position has no provider_position_id — still pending');
     }
 
+    const affiliateId = await this.revenueService.validateAffiliateAttribution(
+      request.affiliate_id,
+      userId
+    );
+
     const txId = generateUUID();
     const now = nowISO();
 
@@ -316,7 +326,7 @@ export class EarnService {
         ${row.current_value},
         ${row.provider_id},
         ${request.idempotency_key},
-        ${request.affiliate_id ?? null},
+        ${affiliateId},
         ${JSON.stringify({
           earn: {
             position_id: request.position_id,

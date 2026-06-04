@@ -13,6 +13,26 @@ import { generateUUID } from '@finlayer/utils';
 import { ValidationError, IdempotencyError, DuplicateIdempotencyKeyError } from '../../../../modules/shared/errors/index.js';
 import type { ISwapProviderAdapter } from '../../../../modules/shared/types/index.js';
 
+function seedAffiliate(
+  mockSql: ReturnType<typeof createMockSql>,
+  affiliateId: string,
+  ownerUserId: string
+): void {
+  const affiliates = mockSql._tables.get('affiliates') ?? [];
+  mockSql._tables.set('affiliates', affiliates);
+  affiliates.push({
+    id: affiliateId,
+    user_id: ownerUserId,
+    code: `FL_${affiliateId.replace(/-/g, '').substring(0, 8).toUpperCase()}`,
+    commission_rate: '0.4',
+    payout_address: null,
+    total_earned: '0',
+    total_paid_out: '0',
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+}
+
 describe('Swap Flow', () => {
   let swapService: SwapService;
   let mockProvider: MockSwapProvider;
@@ -164,6 +184,8 @@ describe('Swap Flow', () => {
 
     test('stores affiliate_id in transaction', async () => {
       const affiliateId = generateUUID();
+      seedAffiliate(mockSql, affiliateId, generateUUID());
+
       const tx = await swapService.executeSwap(userId, {
         quote_id: quoteId,
         recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
@@ -172,6 +194,22 @@ describe('Swap Flow', () => {
       });
 
       expect(tx.affiliate_id).toBe(affiliateId);
+    });
+
+    test('rejects self-referral before provider execution', async () => {
+      const affiliateId = generateUUID();
+      seedAffiliate(mockSql, affiliateId, userId);
+
+      await expect(swapService.executeSwap(userId, {
+        quote_id: quoteId,
+        recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+        idempotency_key: generateUUID(),
+        affiliate_id: affiliateId,
+      })).rejects.toBeInstanceOf(ValidationError);
+
+      expect(mockProvider.executeSwapCalls).toBe(0);
+      const txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs.length).toBe(0);
     });
 
     test('creates revenue event for each transaction', async () => {
@@ -363,6 +401,8 @@ describe('Revenue Tracking', () => {
     });
 
     const affiliateId = generateUUID();
+    seedAffiliate(mockSql, affiliateId, generateUUID());
+
     const eventId = await revenueService.createRevenueEvent({
       transactionId: generateUUID(),
       domain: 'swap',
@@ -376,6 +416,35 @@ describe('Revenue Tracking', () => {
     const event = events.find(e => e['id'] === eventId);
     expect(event!['affiliate_share']).toBe(0.4);
     expect(event!['platform_share']).toBe(0.6);
+  });
+
+  test('self-referral creates a platform-only revenue event', async () => {
+    const { RevenueService } = await import('../../../../modules/swap/revenue.js');
+    const mockSql = createMockSql();
+    const revenueService = new RevenueService(mockSql as never, {
+      platformShareRatio: 0.6,
+      affiliateShareRatio: 0.4,
+      platformFeePercent: 0.003,
+    });
+
+    const payerUserId = generateUUID();
+    const affiliateId = generateUUID();
+    seedAffiliate(mockSql, affiliateId, payerUserId);
+
+    const eventId = await revenueService.createRevenueEvent({
+      transactionId: generateUUID(),
+      domain: 'swap',
+      totalFee: '10',
+      feeAsset: 'BTC',
+      affiliateId,
+      payerUserId,
+    });
+
+    const events = mockSql._tables.get('revenue_events') ?? [];
+    const event = events.find(e => e['id'] === eventId);
+    expect(event!['affiliate_id']).toBeNull();
+    expect(event!['affiliate_share']).toBe(0);
+    expect(event!['platform_share']).toBe(1.0);
   });
 
   test('platform gets 100% when no affiliate', async () => {
