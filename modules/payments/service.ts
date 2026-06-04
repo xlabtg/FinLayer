@@ -65,6 +65,31 @@ const INVOICE_TO_TX_STATUS: Record<InvoiceStatus, TransactionStatus> = {
   underpaid: 'processing',
 };
 
+const PAID_INVOICE_STATUSES: ReadonlySet<InvoiceStatus> = new Set(['paid', 'overpaid']);
+const TERMINAL_INVOICE_STATUSES: ReadonlySet<InvoiceStatus> = new Set([
+  'paid',
+  'overpaid',
+  'expired',
+]);
+
+const INVOICE_STATUS_TRANSITIONS: Record<InvoiceStatus, readonly InvoiceStatus[]> = {
+  pending: ['pending', 'underpaid', 'paid', 'overpaid', 'expired'],
+  underpaid: ['underpaid', 'paid', 'overpaid', 'expired'],
+  paid: ['paid'],
+  overpaid: ['overpaid'],
+  expired: ['expired'],
+};
+
+function canTransitionInvoiceStatus(current: InvoiceStatus, next: InvoiceStatus): boolean {
+  return INVOICE_STATUS_TRANSITIONS[current].includes(next);
+}
+
+interface StatusUpdateResult {
+  applied: boolean;
+  status: InvoiceStatus | null;
+  becamePaid: boolean;
+}
+
 export class PaymentsService {
   private readonly revenueService: RevenueService;
 
@@ -265,7 +290,7 @@ export class PaymentsService {
         try {
           const res = await provider.getInvoiceStatus(row.provider_invoice_id);
           if (res.status !== row.status) {
-            await this.applyStatusUpdate({
+            const update = await this.applyStatusUpdate({
               invoiceId: row.id,
               transactionId: row.transaction_id,
               providerInvoiceId: row.provider_invoice_id,
@@ -276,10 +301,12 @@ export class PaymentsService {
               txHash: res.txHash ?? null,
               paidAt: res.paidAt ?? null,
             });
-            row.status = res.status;
-            row.paid_amount = res.paidAmount ?? row.paid_amount;
-            row.tx_hash = res.txHash ?? row.tx_hash;
-            row.paid_at = res.paidAt ? new Date(res.paidAt) : row.paid_at;
+            if (update.applied && update.status) {
+              row.status = update.status;
+              row.paid_amount = res.paidAmount ?? row.paid_amount;
+              row.tx_hash = res.txHash ?? row.tx_hash;
+              row.paid_at = res.paidAt ? new Date(res.paidAt) : row.paid_at;
+            }
           }
         } catch (err) {
           logger.warn('Failed to refresh invoice from provider', {
@@ -428,7 +455,7 @@ export class PaymentsService {
     }
 
     // Apply the status update.
-    await this.applyStatusUpdate({
+    const update = await this.applyStatusUpdate({
       invoiceId: invoiceRow.id,
       transactionId: invoiceRow.transaction_id,
       providerInvoiceId: invoiceRow.provider_invoice_id,
@@ -439,6 +466,7 @@ export class PaymentsService {
       txHash: params.parsed.txHash ?? null,
       paidAt: params.parsed.paidAt ?? null,
     });
+    const finalStatus = update.status ?? invoiceRow.status;
 
     await this.sql`
       UPDATE payment_webhook_events
@@ -450,13 +478,15 @@ export class PaymentsService {
       provider: params.providerName,
       invoiceId: invoiceRow.id,
       newStatus: params.parsed.status,
+      finalStatus,
+      applied: update.applied,
     });
 
     return {
       processed: true,
       duplicate: false,
       invoiceId: invoiceRow.id,
-      status: params.parsed.status,
+      status: finalStatus,
     };
   }
 
@@ -474,11 +504,61 @@ export class PaymentsService {
     paidAmount: string | null;
     txHash: string | null;
     paidAt: string | null;
-  }): Promise<void> {
-    const paidStates: InvoiceStatus[] = ['paid', 'overpaid'];
-    const isPaid = paidStates.includes(params.newStatus);
+  }): Promise<StatusUpdateResult> {
+    let result: StatusUpdateResult = {
+      applied: false,
+      status: null,
+      becamePaid: false,
+    };
 
     await this.sql.begin(async (tx) => {
+      const [invoiceState] = await tx<{ status: InvoiceStatus }[]>`
+        SELECT status FROM invoices
+        WHERE id = ${params.invoiceId}
+        FOR UPDATE
+      `;
+
+      if (!invoiceState) {
+        return;
+      }
+
+      const currentStatus = invoiceState.status;
+      if (TERMINAL_INVOICE_STATUSES.has(currentStatus)) {
+        if (currentStatus !== params.newStatus) {
+          logger.warn('Payment invoice status transition ignored', {
+            provider: params.providerName,
+            providerId: params.providerId,
+            invoiceId: params.invoiceId,
+            providerInvoiceId: params.providerInvoiceId,
+            currentStatus,
+            requestedStatus: params.newStatus,
+          });
+        }
+        result = {
+          applied: false,
+          status: currentStatus,
+          becamePaid: false,
+        };
+        return;
+      }
+
+      if (!canTransitionInvoiceStatus(currentStatus, params.newStatus)) {
+        logger.warn('Payment invoice status transition ignored', {
+          provider: params.providerName,
+          providerId: params.providerId,
+          invoiceId: params.invoiceId,
+          providerInvoiceId: params.providerInvoiceId,
+          currentStatus,
+          requestedStatus: params.newStatus,
+        });
+        result = {
+          applied: false,
+          status: currentStatus,
+          becamePaid: false,
+        };
+        return;
+      }
+
       await tx`
         UPDATE invoices
         SET status = ${params.newStatus},
@@ -497,22 +577,32 @@ export class PaymentsService {
             updated_at = NOW()
         WHERE id = ${params.transactionId}
       `;
+
+      result = {
+        applied: currentStatus !== params.newStatus,
+        status: params.newStatus,
+        becamePaid:
+          !PAID_INVOICE_STATUSES.has(currentStatus) &&
+          PAID_INVOICE_STATUSES.has(params.newStatus),
+      };
     });
 
-    if (isPaid) {
+    if (result.becamePaid) {
       // Emit revenue event if one doesn't already exist.
       const [txRow] = await this.sql<{
         revenue_event_id: string | null;
         amount: string;
+        result_amount: string | null;
         from_asset: string;
         affiliate_id: string | null;
         user_id: string;
       }[]>`
-        SELECT revenue_event_id, amount, from_asset, affiliate_id, user_id
+        SELECT revenue_event_id, amount, result_amount, from_asset, affiliate_id, user_id
         FROM transactions WHERE id = ${params.transactionId}
       `;
       if (txRow && !txRow.revenue_event_id) {
-        const totalFee = this.revenueService.calculatePlatformFee(txRow.amount);
+        const paidAmount = params.paidAmount ?? txRow.result_amount ?? txRow.amount;
+        const totalFee = this.revenueService.calculatePlatformFee(paidAmount);
         const revenueEventId = await this.revenueService.createRevenueEvent({
           transactionId: params.transactionId,
           domain: 'payments',
@@ -526,6 +616,8 @@ export class PaymentsService {
         `;
       }
     }
+
+    return result;
   }
 
   private pickProvider(preferred?: string): IPaymentProviderAdapter {
