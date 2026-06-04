@@ -15,7 +15,7 @@ import type {
   WalletAddressRequest,
   AssetBalance,
 } from '@finlayer/types';
-import type { IWalletBalanceProvider } from '../shared/types/index.js';
+import type { IWalletBalanceProvider, WalletBalanceResult } from '../shared/types/index.js';
 import {
   ValidationError,
   WalletNotFoundError,
@@ -55,6 +55,32 @@ interface DbWalletAddress {
   public_key: string | null;
   created_at: Date;
 }
+
+interface TokenBalanceMetadata {
+  contract: string;
+  decimals: number;
+}
+
+const NATIVE_ASSET_BY_NETWORK: Record<string, string> = {
+  bitcoin: 'BTC',
+  ethereum: 'ETH',
+  polygon: 'MATIC',
+  bsc: 'BNB',
+  arbitrum: 'ETH',
+  optimism: 'ETH',
+  base: 'ETH',
+};
+
+const TOKEN_BALANCE_METADATA: Record<string, TokenBalanceMetadata> = {
+  'ethereum:USDC': {
+    contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    decimals: 6,
+  },
+  'ethereum:USDT': {
+    contract: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    decimals: 6,
+  },
+};
 
 export interface WalletGenerateResult {
   wallet_id: UUID;
@@ -167,19 +193,15 @@ export class WalletService {
       );
     }
 
-    const result = await provider.getNativeBalance({
-      network: row.network,
-      address: row.address,
-    });
+    const result = this.isNativeAsset(row.asset, row.network)
+      ? await provider.getNativeBalance({
+        network: row.network,
+        address: row.address,
+        asset: row.asset,
+      })
+      : await this.getTokenBalance(provider, row);
 
-    return {
-      asset: result.asset,
-      network: result.network,
-      address: result.address,
-      balance: result.balance,
-      balance_usd: result.balanceUsd ?? null,
-      updated_at: result.updatedAt,
-    };
+    return this.mapBalance(result);
   }
 
   /** List supported (asset, network) pairs, advertised at GET /v1/wallet/supported */
@@ -223,6 +245,50 @@ export class WalletService {
     return null;
   }
 
+  private isNativeAsset(asset: string, network: string): boolean {
+    return NATIVE_ASSET_BY_NETWORK[network.toLowerCase()] === asset.toUpperCase();
+  }
+
+  private async getTokenBalance(
+    provider: IWalletBalanceProvider,
+    row: DbWalletAddress
+  ): Promise<WalletBalanceResult> {
+    const token = this.tokenMetadata(row.asset, row.network);
+    if (!token) {
+      throw new UnsupportedAssetError(row.asset, row.network);
+    }
+    if (!provider.getTokenBalances) {
+      throw new BalanceProviderError(
+        provider.name,
+        `Provider does not support token balances for ${row.asset} on ${row.network}`
+      );
+    }
+
+    const balances = await provider.getTokenBalances({
+      network: row.network,
+      address: row.address,
+      asset: row.asset,
+      tokenContract: token.contract,
+      tokenDecimals: token.decimals,
+    });
+    const asset = row.asset.toUpperCase();
+    const network = row.network.toLowerCase();
+    const result = balances.find(b =>
+      b.asset.toUpperCase() === asset && b.network.toLowerCase() === network
+    );
+    if (!result) {
+      throw new BalanceProviderError(
+        provider.name,
+        `Provider did not return ${row.asset} balance on ${row.network}`
+      );
+    }
+    return result;
+  }
+
+  private tokenMetadata(asset: string, network: string): TokenBalanceMetadata | null {
+    return TOKEN_BALANCE_METADATA[`${network.toLowerCase()}:${asset.toUpperCase()}`] ?? null;
+  }
+
   private mapAddress(row: DbWalletAddress): WalletAddress {
     return {
       id: row.id,
@@ -232,6 +298,17 @@ export class WalletService {
       label: row.label,
       qr_code_url: null,
       created_at: row.created_at.toISOString(),
+    };
+  }
+
+  private mapBalance(result: WalletBalanceResult): AssetBalance {
+    return {
+      asset: result.asset,
+      network: result.network,
+      address: result.address,
+      balance: result.balance,
+      balance_usd: result.balanceUsd ?? null,
+      updated_at: result.updatedAt,
     };
   }
 }

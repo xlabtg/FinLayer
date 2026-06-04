@@ -16,6 +16,11 @@ const DECIMALS: Record<string, number> = {
   base: 18,
 };
 
+const TOKEN_DECIMALS: Record<string, number> = {
+  USDC: 6,
+  USDT: 6,
+};
+
 const NATIVE: Record<string, string> = {
   bitcoin: 'BTC',
   ethereum: 'ETH',
@@ -31,10 +36,19 @@ export class MockBalanceProvider implements IWalletBalanceProvider {
   public readonly supportedNetworks = Object.keys(DECIMALS);
 
   private fixtures = new Map<string, string>();
+  private tokenFixtures = new Map<string, string>();
 
   /** Test helper: preset balances for (network:address) pairs. */
   setBalance(network: string, address: string, balance: string): void {
     this.fixtures.set(`${network.toLowerCase()}:${address.toLowerCase()}`, balance);
+  }
+
+  /** Test helper: preset token balances for (network:address:asset) tuples. */
+  setTokenBalance(network: string, address: string, asset: string, balance: string): void {
+    this.tokenFixtures.set(
+      `${network.toLowerCase()}:${address.toLowerCase()}:${asset.toUpperCase()}`,
+      balance
+    );
   }
 
   async getNativeBalance(params: BalanceQueryParams): Promise<WalletBalanceResult> {
@@ -49,5 +63,25 @@ export class MockBalanceProvider implements IWalletBalanceProvider {
       decimals: DECIMALS[net] ?? 18,
       updatedAt: nowISO(),
     };
+  }
+
+  async getTokenBalances(params: BalanceQueryParams): Promise<WalletBalanceResult[]> {
+    const asset = params.asset?.toUpperCase();
+    if (!asset) return [];
+
+    const net = params.network.toLowerCase();
+    const address = params.address.toLowerCase();
+    const tokenKey = `${net}:${address}:${asset}`;
+    const nativeKey = `${net}:${address}`;
+    const balance = this.tokenFixtures.get(tokenKey) ?? this.fixtures.get(nativeKey) ?? '0';
+
+    return [{
+      network: net,
+      address: params.address,
+      asset,
+      balance,
+      decimals: params.tokenDecimals ?? TOKEN_DECIMALS[asset] ?? 18,
+      updatedAt: nowISO(),
+    }];
   }
 }

@@ -128,7 +128,7 @@ export async function walletRoutes(fastify: FastifyInstance): Promise<void> {
 
   /**
    * GET /v1/wallet/addresses/:id/balance
-   * Fetch the native balance for a user address.
+   * Fetch the asset balance for a user address.
    */
   fastify.get('/addresses/:id/balance', {
     preHandler: [fastify.authenticate, fastify.requireScope('wallet:read')],

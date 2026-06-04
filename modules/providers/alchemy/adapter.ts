@@ -1,8 +1,9 @@
 /**
  * modules/providers/alchemy/adapter.ts
- * Alchemy balance provider — queries native EVM balances via JSON-RPC.
+ * Alchemy balance provider — queries native and ERC-20 EVM balances via JSON-RPC.
  *
  * Alchemy API docs: https://docs.alchemy.com/reference/eth-getbalance
+ * Token balances: https://www.alchemy.com/docs/reference/alchemy-gettokenbalances
  * Configure via ALCHEMY_API_KEY env var.
  */
 
@@ -25,6 +26,12 @@ const NATIVE_ASSET: Record<string, string> = {
   optimism: 'ETH',
   base: 'ETH',
 };
+
+interface AlchemyTokenBalance {
+  contractAddress: string;
+  tokenBalance: string | null;
+  error?: string;
+}
 
 export class AlchemyBalanceProvider implements IWalletBalanceProvider {
   public readonly name = 'Alchemy';
@@ -70,6 +77,63 @@ export class AlchemyBalanceProvider implements IWalletBalanceProvider {
       decimals: 18,
       updatedAt: nowISO(),
     };
+  }
+
+  async getTokenBalances(params: BalanceQueryParams): Promise<WalletBalanceResult[]> {
+    const net = params.network.toLowerCase();
+    const base = ENDPOINTS[net];
+    if (!base) {
+      throw new BalanceProviderError(this.name, `Unsupported network: ${params.network}`);
+    }
+    if (!params.asset || !params.tokenContract || params.tokenDecimals === undefined) {
+      throw new BalanceProviderError(
+        this.name,
+        'Token balance query requires asset, tokenContract and tokenDecimals'
+      );
+    }
+
+    const url = `${base}/${this.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'alchemy_getTokenBalances',
+        params: [params.address, [params.tokenContract]],
+      }),
+    });
+
+    if (!res.ok) {
+      throw new BalanceProviderError(this.name, `HTTP ${res.status}`);
+    }
+    const json = await res.json() as {
+      result?: { tokenBalances?: AlchemyTokenBalance[] };
+      error?: { message?: string };
+    };
+    if (json.error) {
+      throw new BalanceProviderError(this.name, json.error.message ?? 'rpc error');
+    }
+
+    const requestedContract = params.tokenContract.toLowerCase();
+    const token = json.result?.tokenBalances?.find(t =>
+      t.contractAddress.toLowerCase() === requestedContract
+    );
+    if (!token) {
+      throw new BalanceProviderError(this.name, `Token balance not returned for ${params.asset}`);
+    }
+    if (token.error) {
+      throw new BalanceProviderError(this.name, token.error);
+    }
+
+    return [{
+      network: net,
+      address: params.address,
+      asset: params.asset.toUpperCase(),
+      balance: formatUnits(BigInt(token.tokenBalance ?? '0x0'), params.tokenDecimals),
+      decimals: params.tokenDecimals,
+      updatedAt: nowISO(),
+    }];
   }
 }
 
