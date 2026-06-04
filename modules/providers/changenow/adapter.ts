@@ -18,15 +18,15 @@ import type {
   SwapWebhookVerifyResult,
 } from '../../shared/types/index.js';
 import { ProviderError, ProviderRateLimitError, InsufficientLiquidityError } from '../../shared/errors/index.js';
-import { futureISO } from '@finlayer/utils';
+import { compareNumericStrings, futureISO } from '@finlayer/utils';
 import { logger } from '../../shared/utils/logger.js';
 
 const CHANGENOW_API_URL = 'https://api.changenow.io/v2';
 const QUOTE_TTL_SECONDS = 300; // 5 minutes
 
 interface ChangeNOWMinAmountResponse {
-  minAmount: number;
-  maxAmount: number | null;
+  minAmount: number | string;
+  maxAmount: number | string | null;
 }
 
 interface ChangeNOWEstimatedResponse {
@@ -119,14 +119,15 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
         'GET'
       );
       minAmount = String(minRes.minAmount);
-      maxAmount = minRes.maxAmount ? String(minRes.maxAmount) : '999999';
+      maxAmount = minRes.maxAmount !== null && minRes.maxAmount !== undefined
+        ? String(minRes.maxAmount)
+        : '999999';
     } catch (err) {
       logger.warn('ChangeNOW: failed to get min amount', { error: String(err) });
     }
 
     // Validate amount is within range
-    const amountNum = parseFloat(amount);
-    if (amountNum < parseFloat(minAmount)) {
+    if (compareNumericStrings(amount, minAmount) < 0) {
       throw new InsufficientLiquidityError(fromAsset, toAsset);
     }
 

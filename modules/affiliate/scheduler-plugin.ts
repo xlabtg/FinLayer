@@ -17,7 +17,7 @@ declare module 'fastify' {
 export default fp(async function schedulerPlugin(fastify: FastifyInstance) {
   const enabled = process.env['PAYOUT_SCHEDULER_ENABLED'] === 'true';
   const intervalMs = parseInt(process.env['PAYOUT_INTERVAL_MS'] ?? '3600000', 10);
-  const minAmount = parseFloat(process.env['PAYOUT_MIN_AMOUNT'] ?? '1.0');
+  const minAmount = process.env['PAYOUT_MIN_AMOUNT'] ?? '1.0';
   const payoutAsset = process.env['PAYOUT_ASSET'] ?? 'USDC';
 
   const scheduler = new AffiliatePayoutScheduler(fastify.sql, {

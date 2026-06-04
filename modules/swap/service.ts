@@ -201,33 +201,6 @@ export class SwapService {
         });
         this.reliability.recordSuccess(provider.name);
 
-        // Calculate platform fee (0.3% of amount)
-        const platformFee = (parseFloat(request.amount) * DEFAULT_REVENUE_CONFIG.platformFeePercent).toFixed(8);
-
-        // Get provider DB record
-        const [providerRow] = await this.sql<{ id: string }[]>`
-          SELECT id FROM providers WHERE name = ${provider.name} AND is_active = TRUE LIMIT 1
-        `;
-        if (!providerRow) return null;
-
-        const quote: Omit<SwapQuote, 'id'> = {
-          provider_id: providerRow.id,
-          provider_name: provider.name,
-          from_asset: fromAsset,
-          to_asset: toAsset,
-          from_amount: result.fromAmount,
-          to_amount: result.toAmount,
-          rate: result.rate,
-          fee_amount: result.networkFee,
-          fee_asset: result.feeAsset,
-          platform_fee: platformFee,
-          network_fee: result.networkFee,
-          estimated_duration_seconds: result.estimatedDurationSeconds,
-          expires_at: result.expiresAt,
-          min_amount: result.minAmount,
-          max_amount: result.maxAmount,
-        };
-
         return this.materializeQuote(userId, fromAsset, toAsset, request.amount, provider, result);
       } catch (err) {
         this.reliability.recordFailure(provider.name);
@@ -284,7 +257,7 @@ export class SwapService {
     provider: ISwapProviderAdapter,
     result: import('../shared/types/index.js').SwapQuoteResult
   ): Promise<MaterializedQuote | null> {
-    const platformFee = (parseFloat(requestAmount) * DEFAULT_REVENUE_CONFIG.platformFeePercent).toFixed(8);
+    const platformFee = this.revenueService.calculatePlatformFee(requestAmount);
 
     const [providerRow] = await this.sql<{ id: string }[]>`
       SELECT id FROM providers WHERE name = ${provider.name} AND is_active = TRUE LIMIT 1

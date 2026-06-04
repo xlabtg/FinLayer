@@ -21,12 +21,17 @@
  */
 
 import type { SQL } from 'postgres';
-import { generateUUID } from '@finlayer/utils';
+import {
+  addNumericStrings,
+  compareNumericStrings,
+  generateUUID,
+  multiplyNumericStrings,
+} from '@finlayer/utils';
 import { logger } from '../shared/utils/logger.js';
 
 export interface SchedulerOptions {
   intervalMs?: number;
-  minPayoutAmount?: number; // e.g. 1.0 USDC — avoid micro-payouts
+  minPayoutAmount?: string | number; // e.g. 1.0 USDC — avoid micro-payouts
   payoutAsset?: string;
   enabled?: boolean;
 }
@@ -56,7 +61,7 @@ export class AffiliatePayoutScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private readonly intervalMs: number;
-  private readonly minPayoutAmount: number;
+  private readonly minPayoutAmount: string;
   private readonly payoutAsset: string;
 
   constructor(
@@ -64,7 +69,7 @@ export class AffiliatePayoutScheduler {
     options: SchedulerOptions = {}
   ) {
     this.intervalMs = options.intervalMs ?? 60 * 60 * 1000;
-    this.minPayoutAmount = options.minPayoutAmount ?? 1.0;
+    this.minPayoutAmount = String(options.minPayoutAmount ?? '1.0');
     this.payoutAsset = options.payoutAsset ?? 'USDC';
   }
 
@@ -164,10 +169,13 @@ export class AffiliatePayoutScheduler {
       }
 
       const totalPending = events.reduce((acc, ev) => {
-        return acc + (parseFloat(ev.total_fee) * parseFloat(ev.affiliate_share));
-      }, 0).toFixed(8);
+        return addNumericStrings(
+          acc,
+          multiplyNumericStrings(ev.total_fee, ev.affiliate_share)
+        );
+      }, '0');
 
-      if (parseFloat(totalPending) < this.minPayoutAmount) {
+      if (compareNumericStrings(totalPending, this.minPayoutAmount) < 0) {
         result = 'skipped';
         return;
       }
@@ -183,7 +191,7 @@ export class AffiliatePayoutScheduler {
       `;
 
       for (const ev of events) {
-        const amount = (parseFloat(ev.total_fee) * parseFloat(ev.affiliate_share)).toFixed(8);
+        const amount = multiplyNumericStrings(ev.total_fee, ev.affiliate_share);
         await tx`
           INSERT INTO affiliate_payout_items (payout_id, revenue_event_id, amount)
           VALUES (${payoutId}, ${ev.id}, ${amount})
