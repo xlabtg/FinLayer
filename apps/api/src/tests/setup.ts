@@ -4,7 +4,7 @@
  */
 
 import type { SQL } from 'postgres';
-import { generateUUID, nowISO } from '@finlayer/utils';
+import { addNumericStrings, generateUUID, multiplyNumericStrings } from '@finlayer/utils';
 
 interface MockRow {
   [key: string]: unknown;
@@ -477,17 +477,15 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('UPDATE AFFILIATES')) {
-        const amount = parseFloat(String(values[0] ?? '0'));
+        const amount = String(values[0] ?? '0');
         const affiliateId = values[1];
         const row = initTable('affiliates').find(r => r['id'] === affiliateId);
         if (row && query.includes('TOTAL_EARNED')) {
-          const current = parseFloat(String(row['total_earned'] ?? '0'));
-          row['total_earned'] = (current + amount).toFixed(8);
+          row['total_earned'] = addNumericStrings(String(row['total_earned'] ?? '0'), amount);
           row['updated_at'] = new Date();
         }
         if (row && query.includes('TOTAL_PAID_OUT')) {
-          const current = parseFloat(String(row['total_paid_out'] ?? '0'));
-          row['total_paid_out'] = (current + amount).toFixed(8);
+          row['total_paid_out'] = addNumericStrings(String(row['total_paid_out'] ?? '0'), amount);
           row['updated_at'] = new Date();
         }
         return Promise.resolve([]);
@@ -570,12 +568,15 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
           );
           if (pending.length === 0) continue;
           const total = pending.reduce((acc, e) => {
-            return acc + (parseFloat(String(e['total_fee'])) * parseFloat(String(e['affiliate_share'])));
-          }, 0);
+            return addNumericStrings(
+              acc,
+              multiplyNumericStrings(String(e['total_fee']), String(e['affiliate_share']))
+            );
+          }, '0');
           result.push({
             affiliate_id: aff['id'],
             payout_address: aff['payout_address'],
-            total_pending: total.toFixed(8),
+            total_pending: total,
             event_count: String(pending.length),
           });
         }

@@ -16,6 +16,7 @@
 
 import type { SQL } from 'postgres';
 import type { AffiliateLink, UUID } from '@finlayer/types';
+import { isValidAmount } from '@finlayer/utils';
 import { AffiliateService } from '../affiliate/service.js';
 import { ValidationError } from '../shared/errors/index.js';
 
@@ -161,7 +162,7 @@ function requireAsset(value: string | undefined, field: string): void {
 }
 
 function requireAmount(value: string): void {
-  if (!/^\d+(\.\d+)?$/.test(value) || parseFloat(value) <= 0) {
+  if (!isValidAmount(value)) {
     throw new ValidationError(`Invalid amount: ${value}`);
   }
 }

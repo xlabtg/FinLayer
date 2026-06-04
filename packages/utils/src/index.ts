@@ -17,36 +17,112 @@ export function isValidUUID(value: string): boolean {
 
 // ─── Numeric Precision ────────────────────────────────────────────────────────
 
+type NumericSign = 1 | -1;
+
+interface ParsedNumeric {
+  sign: NumericSign;
+  unscaled: bigint;
+  scale: number;
+}
+
+const NUMERIC_STRING_RE = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:e([+-]?\d+))?$/i;
+
+function parseNumericString(value: string): ParsedNumeric {
+  const match = value.trim().match(NUMERIC_STRING_RE);
+  if (!match) {
+    throw new Error(`Invalid numeric string: ${value}`);
+  }
+
+  const sign: NumericSign = match[1] === '-' ? -1 : 1;
+  const intPart = match[2] ?? '0';
+  const decPart = match[3] ?? match[4] ?? '';
+  const exponent = match[5] ? parseInt(match[5], 10) : 0;
+  let scale = decPart.length - exponent;
+  let digits = `${intPart}${decPart}`.replace(/^0+/, '') || '0';
+
+  if (scale < 0) {
+    digits = digits.padEnd(digits.length - scale, '0');
+    scale = 0;
+  }
+
+  const unscaled = BigInt(digits);
+  return {
+    sign: unscaled === 0n ? 1 : sign,
+    unscaled,
+    scale,
+  };
+}
+
+function pow10(exponent: number): bigint {
+  return 10n ** BigInt(exponent);
+}
+
+function signedUnscaled(value: ParsedNumeric, targetScale: number): bigint {
+  const scaled = value.unscaled * pow10(targetScale - value.scale);
+  return value.sign === 1 ? scaled : -scaled;
+}
+
+function decimalToString(value: bigint, scale: number): string {
+  if (value === 0n) return '0';
+
+  const sign = value < 0n ? '-' : '';
+  const abs = value < 0n ? -value : value;
+  if (scale === 0) return `${sign}${abs.toString()}`;
+
+  const str = abs.toString().padStart(scale + 1, '0');
+  const intPart = str.slice(0, -scale) || '0';
+  const decPart = str.slice(-scale).replace(/0+$/, '');
+  return decPart ? `${sign}${intPart}.${decPart}` : `${sign}${intPart}`;
+}
+
 /**
  * Safe numeric string addition (avoids floating-point issues).
- * Uses BigInt for integer part + string manipulation for decimals.
+ * Uses BigInt fixed-point arithmetic and preserves all decimal precision.
  */
 export function addNumericStrings(a: string, b: string): string {
-  const [aInt, aDec = ''] = a.split('.');
-  const [bInt, bDec = ''] = b.split('.');
-  const maxDec = Math.max(aDec.length, bDec.length);
-  const aFull = BigInt((aInt ?? '0') + aDec.padEnd(maxDec, '0'));
-  const bFull = BigInt((bInt ?? '0') + bDec.padEnd(maxDec, '0'));
-  const sum = aFull + bFull;
-  const str = sum.toString().padStart(maxDec + 1, '0');
-  if (maxDec === 0) return str;
-  const intPart = str.slice(0, -maxDec) || '0';
-  const decPart = str.slice(-maxDec).replace(/0+$/, '');
-  return decPart ? `${intPart}.${decPart}` : intPart;
+  const left = parseNumericString(a);
+  const right = parseNumericString(b);
+  const scale = Math.max(left.scale, right.scale);
+  return decimalToString(
+    signedUnscaled(left, scale) + signedUnscaled(right, scale),
+    scale
+  );
+}
+
+export function subtractNumericStrings(a: string, b: string): string {
+  const left = parseNumericString(a);
+  const right = parseNumericString(b);
+  const scale = Math.max(left.scale, right.scale);
+  return decimalToString(
+    signedUnscaled(left, scale) - signedUnscaled(right, scale),
+    scale
+  );
 }
 
 export function multiplyNumericStrings(a: string, b: string): string {
-  const [aInt, aDec = ''] = a.split('.');
-  const [bInt, bDec = ''] = b.split('.');
-  const totalDec = aDec.length + bDec.length;
-  const aFull = BigInt((aInt ?? '0') + aDec);
-  const bFull = BigInt((bInt ?? '0') + bDec);
-  const product = aFull * bFull;
-  const str = product.toString().padStart(totalDec + 1, '0');
-  if (totalDec === 0) return str;
-  const intPart = str.slice(0, -totalDec) || '0';
-  const decPart = str.slice(-totalDec).replace(/0+$/, '');
-  return decPart ? `${intPart}.${decPart}` : intPart;
+  const left = parseNumericString(a);
+  const right = parseNumericString(b);
+  const sign = left.sign === right.sign ? 1n : -1n;
+  return decimalToString(sign * left.unscaled * right.unscaled, left.scale + right.scale);
+}
+
+export function compareNumericStrings(a: string, b: string): -1 | 0 | 1 {
+  const left = parseNumericString(a);
+  const right = parseNumericString(b);
+  const scale = Math.max(left.scale, right.scale);
+  const leftValue = signedUnscaled(left, scale);
+  const rightValue = signedUnscaled(right, scale);
+  if (leftValue < rightValue) return -1;
+  if (leftValue > rightValue) return 1;
+  return 0;
+}
+
+export function isPositiveNumericString(value: string): boolean {
+  try {
+    return compareNumericStrings(value, '0') > 0;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Asset Validation ─────────────────────────────────────────────────────────
@@ -63,7 +139,7 @@ export function isValidCryptoAddress(address: string): boolean {
 }
 
 export function isValidAmount(amount: string): boolean {
-  return /^\d+(\.\d+)?$/.test(amount) && parseFloat(amount) > 0;
+  return /^\d+(\.\d+)?$/.test(amount) && isPositiveNumericString(amount);
 }
 
 // ─── API Key Helpers ──────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@
  */
 
 import type { Numeric } from '@finlayer/types';
+import { compareNumericStrings, subtractNumericStrings } from '@finlayer/utils';
 
 export interface RoutingCandidate {
   providerName: string;
@@ -96,11 +97,16 @@ export class ProviderReliabilityTracker {
  * the codebase (all monetary values are strings to avoid float rounding).
  */
 export function netOutput(candidate: RoutingCandidate): string {
-  const to = parseFloat(candidate.toAmount);
-  const platformFee = parseFloat(candidate.platformFee);
-  const networkFee = parseFloat(candidate.networkFee);
-  const net = to - platformFee - networkFee;
-  return net.toFixed(8);
+  return subtractNumericStrings(
+    subtractNumericStrings(candidate.toAmount, candidate.platformFee),
+    candidate.networkFee
+  );
+}
+
+function numericToFiniteNumber(value: string): number {
+  const n = Number(value);
+  if (Number.isFinite(n)) return n;
+  return compareNumericStrings(value, '0') < 0 ? -Number.MAX_VALUE : Number.MAX_VALUE;
 }
 
 /**
@@ -127,12 +133,14 @@ export function rankCandidates<T extends RoutingCandidate>(
   }
 
   const nets = candidates.map(netOutput);
-  const maxNet = Math.max(...nets.map(parseFloat), 0.0000000001);
+  const maxNet = nets.reduce((max, net) => (
+    compareNumericStrings(net, max) > 0 ? net : max
+  ), '0.0000000001');
   const maxDuration = Math.max(...candidates.map(c => c.estimatedDurationSeconds), 1);
 
   const scored = candidates.map((c, i) => {
     const netStr = nets[i] ?? '0';
-    const netNorm = parseFloat(netStr) / maxNet;
+    const netNorm = numericToFiniteNumber(netStr) / numericToFiniteNumber(maxNet);
     const durationNorm = c.estimatedDurationSeconds / maxDuration;
     const relScore = reliability.score(c.providerName);
 
@@ -146,9 +154,8 @@ export function rankCandidates<T extends RoutingCandidate>(
 
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    const toA = parseFloat(a.toAmount);
-    const toB = parseFloat(b.toAmount);
-    if (toB !== toA) return toB - toA;
+    const amountOrder = compareNumericStrings(b.toAmount, a.toAmount);
+    if (amountOrder !== 0) return amountOrder;
     const relA = reliability.score(a.providerName);
     const relB = reliability.score(b.providerName);
     if (relB !== relA) return relB - relA;

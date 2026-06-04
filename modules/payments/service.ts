@@ -5,7 +5,7 @@
  */
 
 import type { SQL } from 'postgres';
-import { generateUUID, nowISO } from '@finlayer/utils';
+import { generateUUID, isValidAmount, nowISO } from '@finlayer/utils';
 import type {
   UUID,
   Invoice,
@@ -88,7 +88,7 @@ export class PaymentsService {
     if (!request.asset || request.asset.length < 2 || request.asset.length > 20) {
       throw new ValidationError(`Invalid asset: ${request.asset}`);
     }
-    if (!request.amount || !/^\d+(\.\d+)?$/.test(request.amount) || parseFloat(request.amount) <= 0) {
+    if (!request.amount || !isValidAmount(request.amount)) {
       throw new ValidationError(`Invalid amount: ${request.amount}`);
     }
 

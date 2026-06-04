@@ -5,7 +5,7 @@
  */
 
 import type { SQL } from 'postgres';
-import { generateUUID } from '@finlayer/utils';
+import { generateUUID, multiplyNumericStrings } from '@finlayer/utils';
 import type { ProviderDomain, UUID } from '@finlayer/types';
 import type { RevenueConfig } from '../shared/types/index.js';
 import { logger } from '../shared/utils/logger.js';
@@ -102,7 +102,7 @@ export class RevenueService {
 
     // Update affiliate total_earned if applicable
     if (effectiveAffiliateId) {
-      const affiliateAmount = (parseFloat(totalFee) * affiliateShare).toFixed(8);
+      const affiliateAmount = multiplyNumericStrings(totalFee, String(affiliateShare));
       await this.sql`
         UPDATE affiliates
         SET total_earned = total_earned + ${affiliateAmount}, updated_at = NOW()
@@ -128,6 +128,6 @@ export class RevenueService {
    * Returns fee as a string to preserve precision.
    */
   calculatePlatformFee(amount: string): string {
-    return (parseFloat(amount) * this.config.platformFeePercent).toFixed(8);
+    return multiplyNumericStrings(amount, String(this.config.platformFeePercent));
   }
 }

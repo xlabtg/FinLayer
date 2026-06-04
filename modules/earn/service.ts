@@ -4,7 +4,7 @@
  */
 
 import type { SQL } from 'postgres';
-import { generateUUID, nowISO, isValidAmount } from '@finlayer/utils';
+import { compareNumericStrings, generateUUID, nowISO, isValidAmount } from '@finlayer/utils';
 import type {
   UUID,
   EarnStrategy,
@@ -123,7 +123,7 @@ export class EarnService {
       throw new EarnStrategyNotFoundError(request.strategy_id);
     }
 
-    if (parseFloat(request.amount) < parseFloat(strategy.minDeposit)) {
+    if (compareNumericStrings(request.amount, strategy.minDeposit) < 0) {
       throw new EarnDepositBelowMinimumError(strategy.minDeposit, strategy.asset);
     }
 
