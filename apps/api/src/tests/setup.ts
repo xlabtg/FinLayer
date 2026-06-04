@@ -674,6 +674,13 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         const providers = initTable('providers');
         const transactions = initTable('transactions');
 
+        // Status row lock lookup used by payments state transitions.
+        if (query.startsWith('SELECT STATUS FROM INVOICES')) {
+          const rows = invoices
+            .filter(r => r['id'] === values[0])
+            .map(r => ({ status: r['status'] }));
+          return Promise.resolve(rows);
+        }
         // By (provider_id, provider_invoice_id)
         if (query.includes('PROVIDER_ID =') && query.includes('PROVIDER_INVOICE_ID =')) {
           const rows = invoices.filter(r =>

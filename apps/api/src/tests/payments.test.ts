@@ -268,6 +268,95 @@ describe('Payments Flow', () => {
       expect(revenueEvents[0]!['source_domain']).toBe('payments');
     });
 
+    test('does not downgrade a terminal paid invoice from a stale webhook', async () => {
+      const invoice = await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: generateUUID(),
+      });
+
+      const providerInvoiceId = [...mockProvider.invoices.keys()][0]!;
+
+      await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: JSON.stringify({
+          event_id: `evt-paid-${generateUUID()}`,
+          invoice_id: providerInvoiceId,
+          status: 'paid',
+          paid_amount: '100',
+          tx_hash: '0xpaid',
+        }),
+        headers: {},
+      });
+
+      const stale = await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: JSON.stringify({
+          event_id: `evt-stale-${generateUUID()}`,
+          invoice_id: providerInvoiceId,
+          status: 'pending',
+        }),
+        headers: {},
+      });
+
+      expect(stale.processed).toBe(true);
+      expect(stale.duplicate).toBe(false);
+      expect(stale.status).toBe('paid');
+
+      const repeatedTerminal = await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: JSON.stringify({
+          event_id: `evt-repeat-paid-${generateUUID()}`,
+          invoice_id: providerInvoiceId,
+          status: 'paid',
+          paid_amount: '10',
+          tx_hash: '0xlate',
+        }),
+        headers: {},
+      });
+      expect(repeatedTerminal.status).toBe('paid');
+
+      const refreshed = await paymentsService.getInvoice(invoice.id, userId);
+      expect(refreshed.status).toBe('paid');
+      expect(refreshed.paid_amount).toBe('100');
+      expect(refreshed.tx_hash).toBe('0xpaid');
+
+      const txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs[0]!['status']).toBe('completed');
+      expect(txs[0]!['result_amount']).toBe('100');
+
+      const revenueEvents = mockSql._tables.get('revenue_events') ?? [];
+      expect(revenueEvents.length).toBe(1);
+    });
+
+    test('calculates payment revenue from actual paid amount', async () => {
+      await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: generateUUID(),
+      });
+
+      const providerInvoiceId = [...mockProvider.invoices.keys()][0]!;
+
+      await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: JSON.stringify({
+          event_id: `evt-partial-${generateUUID()}`,
+          invoice_id: providerInvoiceId,
+          status: 'paid',
+          paid_amount: '40',
+        }),
+        headers: {},
+      });
+
+      const txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs[0]!['result_amount']).toBe('40');
+
+      const revenueEvents = mockSql._tables.get('revenue_events') ?? [];
+      expect(revenueEvents.length).toBe(1);
+      expect(revenueEvents[0]!['total_fee']).toBe('0.12');
+    });
+
     test('is idempotent: duplicate event ids are no-ops', async () => {
       const invoice = await paymentsService.createInvoice(userId, {
         asset: 'USDC',
