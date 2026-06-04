@@ -137,13 +137,16 @@ export class AffiliateService {
   }
 
   /**
-   * Validate that an affiliate_id belongs to an active affiliate.
+   * Validate that an affiliate_id exists and, when a payer is known, is not
+   * owned by the same user.
    */
-  async validateAffiliateId(affiliateId: UUID): Promise<boolean> {
-    const [row] = await this.sql<{ id: string }[]>`
-      SELECT id FROM affiliates WHERE id = ${affiliateId}
+  async validateAffiliateId(affiliateId: UUID, payerUserId?: UUID): Promise<boolean> {
+    const [row] = await this.sql<{ id: string; user_id: string }[]>`
+      SELECT id, user_id FROM affiliates WHERE id = ${affiliateId}
     `;
-    return !!row;
+    if (!row) return false;
+    if (payerUserId && row.user_id === payerUserId) return false;
+    return true;
   }
 
   private mapAffiliate(row: DbAffiliate): Affiliate {

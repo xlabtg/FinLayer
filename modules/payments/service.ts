@@ -103,6 +103,11 @@ export class PaymentsService {
       throw new PaymentProviderUnavailableError(provider.name);
     }
 
+    const affiliateId = await this.revenueService.validateAffiliateAttribution(
+      request.affiliate_id,
+      userId
+    );
+
     const txId = generateUUID();
     const invoiceId = generateUUID();
     const now = nowISO();
@@ -126,7 +131,7 @@ export class PaymentsService {
         ${userId}, ${asset}, ${null}, ${request.amount},
         ${platformFee}, ${asset},
         ${providerRow.id}, ${request.idempotency_key},
-        ${request.affiliate_id ?? null},
+        ${affiliateId},
         ${JSON.stringify({
           payment: {
             invoice_id: invoiceId,
@@ -232,7 +237,7 @@ export class PaymentsService {
       metadata: request.metadata ?? {},
       created_at: new Date(now),
       updated_at: new Date(now),
-      affiliate_id: request.affiliate_id ?? null,
+      affiliate_id: affiliateId,
       revenue_event_id: null,
     });
   }
@@ -496,8 +501,14 @@ export class PaymentsService {
 
     if (isPaid) {
       // Emit revenue event if one doesn't already exist.
-      const [txRow] = await this.sql<{ revenue_event_id: string | null; amount: string; from_asset: string; affiliate_id: string | null }[]>`
-        SELECT revenue_event_id, amount, from_asset, affiliate_id
+      const [txRow] = await this.sql<{
+        revenue_event_id: string | null;
+        amount: string;
+        from_asset: string;
+        affiliate_id: string | null;
+        user_id: string;
+      }[]>`
+        SELECT revenue_event_id, amount, from_asset, affiliate_id, user_id
         FROM transactions WHERE id = ${params.transactionId}
       `;
       if (txRow && !txRow.revenue_event_id) {
@@ -508,6 +519,7 @@ export class PaymentsService {
           totalFee,
           feeAsset: txRow.from_asset,
           affiliateId: txRow.affiliate_id,
+          payerUserId: txRow.user_id,
         });
         await this.sql`
           UPDATE transactions SET revenue_event_id = ${revenueEventId} WHERE id = ${params.transactionId}
