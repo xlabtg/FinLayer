@@ -20,13 +20,50 @@ import {
 import { WalletService } from '../../../../modules/wallet/service.js';
 import { MockBalanceProvider } from '../../../../modules/providers/mock-balance/adapter.js';
 import { UnsupportedAssetError, WalletConfigError } from '../../../../modules/shared/errors/index.js';
-import type { IWalletBalanceProvider } from '../../../../modules/shared/types/index.js';
+import type {
+  BalanceQueryParams,
+  IWalletBalanceProvider,
+  WalletBalanceResult,
+} from '../../../../modules/shared/types/index.js';
 import { createMockSql, createTestUserId } from './setup.js';
 
 // A reusable BIP39 test vector so derivation is reproducible across runs.
 // Source: https://github.com/trezor/python-mnemonic/blob/master/vectors.json (entry 0).
 const TEST_MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+class TokenAwareBalanceProvider implements IWalletBalanceProvider {
+  public readonly name = 'TokenAwareBalance';
+  public readonly supportedNetworks = ['ethereum'];
+  public nativeCalls = 0;
+  public tokenCalls = 0;
+  public lastTokenQuery: BalanceQueryParams | null = null;
+
+  async getNativeBalance(params: BalanceQueryParams): Promise<WalletBalanceResult> {
+    this.nativeCalls += 1;
+    return {
+      network: params.network,
+      address: params.address,
+      asset: 'ETH',
+      balance: '2',
+      decimals: 18,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async getTokenBalances(params: BalanceQueryParams): Promise<WalletBalanceResult[]> {
+    this.tokenCalls += 1;
+    this.lastTokenQuery = params;
+    return [{
+      network: params.network,
+      address: params.address,
+      asset: params.asset ?? 'USDC',
+      balance: '42.25',
+      decimals: params.tokenDecimals ?? 6,
+      updatedAt: new Date().toISOString(),
+    }];
+  }
+}
 
 describe('wallet/hd', () => {
   test('newMnemonic generates 12-word BIP39 phrase', () => {
@@ -199,6 +236,33 @@ describe('WalletService', () => {
     expect(balance.network).toBe('ethereum');
     expect(balance.balance).toBe('1.5');
     expect(balance.address).toBe(eth.address);
+  });
+
+  test('getBalance requests token balance for non-native asset addresses', async () => {
+    const tokenProvider = new TokenAwareBalanceProvider();
+    walletService = new WalletService(
+      createMockSql() as never,
+      new Map<string, IWalletBalanceProvider>([['TokenAwareBalance', tokenProvider]])
+    );
+
+    const gen = await walletService.generateWallet(userId);
+    const usdc = gen.addresses.find(a => a.asset === 'USDC' && a.network === 'ethereum')!;
+
+    const balance = await walletService.getBalance(userId, usdc.id);
+
+    expect(balance.asset).toBe('USDC');
+    expect(balance.network).toBe('ethereum');
+    expect(balance.balance).toBe('42.25');
+    expect(balance.address).toBe(usdc.address);
+    expect(tokenProvider.nativeCalls).toBe(0);
+    expect(tokenProvider.tokenCalls).toBe(1);
+    expect(tokenProvider.lastTokenQuery).toMatchObject({
+      network: 'ethereum',
+      address: usdc.address,
+      asset: 'USDC',
+      tokenContract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+      tokenDecimals: 6,
+    });
   });
 
   test('listSupportedPairs returns all BIP44 default pairs', () => {

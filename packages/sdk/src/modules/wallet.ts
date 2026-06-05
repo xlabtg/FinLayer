@@ -54,7 +54,7 @@ export class WalletModule {
     return this.client.request<{ address: WalletAddress }>('POST', '/v1/wallet/addresses', params);
   }
 
-  /** Query the on-chain native balance of a wallet address. */
+  /** Query the on-chain asset balance of a wallet address. */
   async balance(addressId: UUID): Promise<{ balance: AssetBalance }> {
     return this.client.request<{ balance: AssetBalance }>(
       'GET',

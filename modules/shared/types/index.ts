@@ -78,6 +78,12 @@ export interface IWalletBalanceProvider {
 export interface BalanceQueryParams {
   network: string;
   address: string;
+  /** Requested asset ticker for asset-aware balance queries. */
+  asset?: string;
+  /** Token contract address when the requested asset is non-native. */
+  tokenContract?: string;
+  /** Token decimals when the requested asset is non-native. */
+  tokenDecimals?: number;
 }
 
 export interface WalletBalanceResult {
