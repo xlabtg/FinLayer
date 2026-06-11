@@ -24,6 +24,7 @@ import { paymentsRoutes } from '../../../modules/payments/routes.js';
 import { analyticsRoutes } from '../../../modules/analytics/routes.js';
 import { marketplaceRoutes } from '../../../modules/marketplace/routes.js';
 import { walletRoutes } from '../../../modules/wallet/routes.js';
+import { resolveCorsOrigins } from './config/cors.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
@@ -59,7 +60,7 @@ async function buildApp() {
   });
 
   await app.register(cors, {
-    origin: process.env['CORS_ORIGINS']?.split(',') ?? '*',
+    origin: resolveCorsOrigins(),
     credentials: true,
   });
 
