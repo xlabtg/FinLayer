@@ -14,7 +14,7 @@ import type {
   SwapTransaction,
   TransactionStatus,
 } from '@finlayer/types';
-import type { ISwapProviderAdapter } from '../shared/types/index.js';
+import type { ISwapProviderAdapter, SwapExecuteParams } from '../shared/types/index.js';
 import {
   ValidationError,
   QuoteExpiredError,
@@ -381,11 +381,20 @@ export class SwapService {
     // Execute with provider; record outcome for future routing decisions.
     let executeResult;
     try {
-      executeResult = await provider.executeSwap({
+      const executeParams: SwapExecuteParams = {
         providerQuoteId: quoteRow.provider_quote_id,
+        fromAsset: quoteRow.from_asset,
+        toAsset: quoteRow.to_asset,
+        fromAmount: quoteRow.from_amount,
+        toAmount: quoteRow.to_amount,
+        rate: quoteRow.rate,
         recipientAddress: request.recipient_address,
-        refundAddress: request.refund_address,
-      });
+      };
+      if (request.refund_address) {
+        executeParams.refundAddress = request.refund_address;
+      }
+
+      executeResult = await provider.executeSwap(executeParams);
       this.reliability.recordSuccess(provider.name);
     } catch (err) {
       this.reliability.recordFailure(provider.name);

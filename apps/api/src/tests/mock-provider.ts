@@ -32,6 +32,9 @@ export class MockSwapProvider implements ISwapProviderAdapter {
   /** Toggle to force executeSwap to throw, to test reservation rollback. */
   public forceExecuteError = false;
 
+  /** Last execute parameters, used by quote-preservation tests. */
+  public lastExecuteParams: SwapExecuteParams | null = null;
+
   private txStatuses = new Map<string, SwapStatusResult['status']>();
 
   async isHealthy(): Promise<boolean> {
@@ -74,6 +77,7 @@ export class MockSwapProvider implements ISwapProviderAdapter {
 
   async executeSwap(params: SwapExecuteParams): Promise<SwapExecuteResult> {
     this.executeSwapCalls += 1;
+    this.lastExecuteParams = params;
     if (this.executeDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.executeDelayMs));
     }
