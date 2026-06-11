@@ -72,6 +72,7 @@ services:
       # Provider API keys (set in .env.local)
       CHANGENOW_API_KEY: ${CHANGENOW_API_KEY:-demo_key}
       CORS_ORIGINS: "http://localhost:3000,http://localhost:3001"
+      AFFILIATE_REDIRECT_ALLOWED_ORIGINS: "https://app.finlayer.io,http://localhost:3000,http://localhost:3001"
     ports:
       - "3000:3000"
     volumes:
