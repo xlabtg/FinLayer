@@ -19,9 +19,15 @@ import { logger } from '../utils/logger.js';
 export interface ICacheBackend {
   get<T>(key: string): Promise<T | null>;
   set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
+  increment(key: string, ttlMs: number): Promise<CacheIncrementResult>;
   del(key: string): Promise<void>;
   /** Close underlying connections; a no-op for in-memory. */
   close(): Promise<void>;
+}
+
+export interface CacheIncrementResult {
+  value: number;
+  resetAt: number;
 }
 
 interface InMemoryEntry {
@@ -37,35 +43,32 @@ export class InMemoryCache implements ICacheBackend {
     const entry = this.entries.get(key);
     if (!entry) return null;
     if (Date.now() >= entry.expiresAt) {
-      this.entries.delete(key);
+      this.deleteEntry(key);
       return null;
     }
     return JSON.parse(entry.value) as T;
   }
 
   async set<T>(key: string, value: T, ttlSeconds: number): Promise<void> {
-    const existing = this.entries.get(key);
-    if (existing) clearTimeout(existing.timer);
+    this.setEntry(key, JSON.stringify(value), ttlSeconds * 1000);
+  }
 
-    const timer = setTimeout(() => this.entries.delete(key), ttlSeconds * 1000);
-    // Allow Bun/Node to exit even when idle timers are pending.
-    if (typeof (timer as { unref?: () => void }).unref === 'function') {
-      (timer as { unref: () => void }).unref();
+  async increment(key: string, ttlMs: number): Promise<CacheIncrementResult> {
+    const now = Date.now();
+    const entry = this.entries.get(key);
+    if (!entry || now >= entry.expiresAt) {
+      this.setEntry(key, JSON.stringify(1), ttlMs);
+      return { value: 1, resetAt: now + ttlMs };
     }
 
-    this.entries.set(key, {
-      value: JSON.stringify(value),
-      expiresAt: Date.now() + ttlSeconds * 1000,
-      timer,
-    });
+    const current = JSON.parse(entry.value) as unknown;
+    const value = (typeof current === 'number' && Number.isFinite(current) ? current : 0) + 1;
+    entry.value = JSON.stringify(value);
+    return { value, resetAt: entry.expiresAt };
   }
 
   async del(key: string): Promise<void> {
-    const entry = this.entries.get(key);
-    if (entry) {
-      clearTimeout(entry.timer);
-      this.entries.delete(key);
-    }
+    this.deleteEntry(key);
   }
 
   async close(): Promise<void> {
@@ -79,18 +82,51 @@ export class InMemoryCache implements ICacheBackend {
   size(): number {
     return this.entries.size;
   }
+
+  private setEntry(key: string, value: string, ttlMs: number): void {
+    const existing = this.entries.get(key);
+    if (existing) clearTimeout(existing.timer);
+
+    const expiresAt = Date.now() + ttlMs;
+    const timer = setTimeout(() => this.entries.delete(key), ttlMs);
+    // Allow Bun/Node to exit even when idle timers are pending.
+    if (typeof (timer as { unref?: () => void }).unref === 'function') {
+      (timer as { unref: () => void }).unref();
+    }
+
+    this.entries.set(key, { value, expiresAt, timer });
+  }
+
+  private deleteEntry(key: string): void {
+    const entry = this.entries.get(key);
+    if (entry) {
+      clearTimeout(entry.timer);
+      this.entries.delete(key);
+    }
+  }
 }
 
 /**
- * Minimal Redis-like interface — matches both `ioredis` and `node-redis`
- * method signatures we care about, so the cache can be wired to either
- * without importing the concrete packages into the build.
+ * Minimal Redis-like interface for the `redis` package and test stubs,
+ * without importing the concrete client type into the build.
  */
 export interface RedisLikeClient {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string, modeOrExFlag?: string, ttl?: number): Promise<unknown>;
+  set(key: string, value: string, options?: RedisSetOptions): Promise<unknown>;
+  incr(key: string): Promise<number>;
+  expire(key: string, ttlSeconds: number): Promise<unknown>;
+  pTTL?: (key: string) => Promise<number>;
+  pttl?: (key: string) => Promise<number>;
+  pExpire?: (key: string, ttlMs: number) => Promise<unknown>;
+  pexpire?: (key: string, ttlMs: number) => Promise<unknown>;
   del(key: string): Promise<unknown>;
   quit(): Promise<unknown>;
+}
+
+interface RedisSetOptions {
+  EX?: number;
+  PX?: number;
+  expiration?: { type: 'EX' | 'PX'; value: number };
 }
 
 export class RedisCache implements ICacheBackend {
@@ -107,7 +143,22 @@ export class RedisCache implements ICacheBackend {
   }
 
   async set<T>(key: string, value: T, ttlSeconds: number): Promise<void> {
-    await this.client.set(key, JSON.stringify(value), 'EX', ttlSeconds);
+    await this.client.set(key, JSON.stringify(value), { PX: Math.ceil(ttlSeconds * 1000) });
+  }
+
+  async increment(key: string, ttlMs: number): Promise<CacheIncrementResult> {
+    const value = await this.client.incr(key);
+    if (value === 1) {
+      await this.expireMs(key, ttlMs);
+    }
+
+    let ttl = await this.ttlMs(key);
+    if (ttl < 0) {
+      await this.expireMs(key, ttlMs);
+      ttl = ttlMs;
+    }
+
+    return { value, resetAt: Date.now() + ttl };
   }
 
   async del(key: string): Promise<void> {
@@ -120,6 +171,21 @@ export class RedisCache implements ICacheBackend {
     } catch {
       // Ignore errors on shutdown.
     }
+  }
+
+  private async ttlMs(key: string): Promise<number> {
+    const pttl = this.client.pTTL ?? this.client.pttl;
+    if (pttl) return pttl.call(this.client, key);
+    return -1;
+  }
+
+  private async expireMs(key: string, ttlMs: number): Promise<void> {
+    const pexpire = this.client.pExpire ?? this.client.pexpire;
+    if (pexpire) {
+      await pexpire.call(this.client, key, ttlMs);
+      return;
+    }
+    await this.client.expire(key, Math.ceil(ttlMs / 1000));
   }
 }
 

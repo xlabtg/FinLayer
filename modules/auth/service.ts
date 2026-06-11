@@ -20,10 +20,13 @@ import type {
 } from '@finlayer/types';
 import { UnauthorizedError, ForbiddenError, RateLimitError } from '../shared/errors/index.js';
 import { logger } from '../shared/utils/logger.js';
+import { InMemoryCache, type ICacheBackend } from '../shared/cache/index.js';
 
 const BCRYPT_ROUNDS = 10;
 const KEY_PREFIX_LIVE = 'fl_live';
 const KEY_PREFIX_TEST = 'fl_test';
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_KEY_PREFIX = 'auth:rate-limit';
 
 interface DbApiKey {
   id: string;
@@ -40,11 +43,22 @@ interface DbApiKey {
   revoked_at: Date | null;
 }
 
-// In-memory rate limit store (replace with Redis in production)
-const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+export interface AuthServiceOptions {
+  rateLimitCache?: ICacheBackend;
+  rateLimitWindowMs?: number;
+}
 
 export class AuthService {
-  constructor(private readonly sql: SQL) {}
+  private readonly rateLimitCache: ICacheBackend;
+  private readonly rateLimitWindowMs: number;
+
+  constructor(
+    private readonly sql: SQL,
+    options: AuthServiceOptions = {}
+  ) {
+    this.rateLimitCache = options.rateLimitCache ?? new InMemoryCache();
+    this.rateLimitWindowMs = options.rateLimitWindowMs ?? RATE_LIMIT_WINDOW_MS;
+  }
 
   /**
    * Create a new API key. Returns the plain key once — never retrievable again.
@@ -121,7 +135,7 @@ export class AuthService {
     }
 
     // Check rate limit
-    this.checkRateLimit(matchedRow.id, matchedRow.rate_limit);
+    await this.checkRateLimit(matchedRow.id, matchedRow.rate_limit);
 
     // Update last_used_at asynchronously (fire and forget)
     void this.sql`
@@ -160,26 +174,24 @@ export class AuthService {
       WHERE id = ${keyId} AND user_id = ${userId}
     `;
     // Clear rate limit cache
-    rateLimitStore.delete(keyId);
+    await this.rateLimitCache.del(this.rateLimitKey(keyId));
     logger.info('API key revoked', { keyId, userId });
   }
 
-  private checkRateLimit(keyId: string, limitPerMinute: number): void {
-    const now = Date.now();
-    const windowMs = 60 * 1000;
-    const entry = rateLimitStore.get(keyId);
+  private async checkRateLimit(keyId: string, limitPerMinute: number): Promise<void> {
+    const result = await this.rateLimitCache.increment(
+      this.rateLimitKey(keyId),
+      this.rateLimitWindowMs
+    );
 
-    if (!entry || now > entry.resetAt) {
-      rateLimitStore.set(keyId, { count: 1, resetAt: now + windowMs });
-      return;
-    }
-
-    if (entry.count >= limitPerMinute) {
-      const retryAfterMs = entry.resetAt - now;
+    if (result.value > limitPerMinute) {
+      const retryAfterMs = Math.max(0, result.resetAt - Date.now());
       throw new RateLimitError(retryAfterMs);
     }
+  }
 
-    entry.count++;
+  private rateLimitKey(keyId: string): string {
+    return `${RATE_LIMIT_KEY_PREFIX}:${keyId}`;
   }
 
   private mapDbApiKey(row: DbApiKey): ApiKey {

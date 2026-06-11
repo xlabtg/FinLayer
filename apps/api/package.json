@@ -35,6 +35,7 @@
     "bs58check": "^3.0.1",
     "prom-client": "^15.1.0",
     "@sentry/node": "^7.109.0",
+    "redis": "^6.0.0",
     "@finlayer/types": "workspace:*",
     "@finlayer/utils": "workspace:*"
   },

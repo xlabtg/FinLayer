@@ -11,7 +11,7 @@ import {
   netOutput,
   DEFAULT_WEIGHTS,
 } from '../../../../modules/shared/routing/index.js';
-import { InMemoryCache, swapQuoteCacheKey } from '../../../../modules/shared/cache/index.js';
+import { InMemoryCache, RedisCache, swapQuoteCacheKey } from '../../../../modules/shared/cache/index.js';
 
 describe('routing.netOutput', () => {
   test('subtracts platform + network fees from to_amount', () => {
@@ -147,6 +147,113 @@ describe('InMemoryCache', () => {
     await cache.set('k', 'v2', 0.5);
     await new Promise((r) => setTimeout(r, 50));
     expect(await cache.get('k')).toBe('v2');
+  });
+});
+
+describe('RedisCache.increment', () => {
+  function createFakeRedisClient() {
+    const values = new Map<string, string>();
+    const expiresAt = new Map<string, number>();
+
+    const purgeExpired = (key: string) => {
+      const resetAt = expiresAt.get(key);
+      if (resetAt !== undefined && Date.now() >= resetAt) {
+        values.delete(key);
+        expiresAt.delete(key);
+      }
+    };
+    const ttlMsFromOptions = (
+      options?: { EX?: number; PX?: number; expiration?: { type: 'EX' | 'PX'; value: number } }
+    ): number | undefined => {
+      if (!options) return undefined;
+      if (options.PX !== undefined) return options.PX;
+      if (options.EX !== undefined) return options.EX * 1000;
+      if (!options.expiration) return undefined;
+      return options.expiration.type === 'PX'
+        ? options.expiration.value
+        : options.expiration.value * 1000;
+    };
+
+    return {
+      async get(key: string): Promise<string | null> {
+        purgeExpired(key);
+        return values.get(key) ?? null;
+      },
+      async set(
+        key: string,
+        value: string,
+        options?: { EX?: number; PX?: number; expiration?: { type: 'EX' | 'PX'; value: number } }
+      ): Promise<unknown> {
+        values.set(key, value);
+        const ttlMs = ttlMsFromOptions(options);
+        if (ttlMs !== undefined) {
+          expiresAt.set(key, Date.now() + ttlMs);
+        }
+        return 'OK';
+      },
+      async incr(key: string): Promise<number> {
+        purgeExpired(key);
+        const value = Number(values.get(key) ?? '0') + 1;
+        values.set(key, String(value));
+        return value;
+      },
+      async expire(key: string, ttlSeconds: number): Promise<unknown> {
+        expiresAt.set(key, Date.now() + ttlSeconds * 1000);
+        return 1;
+      },
+      async pTTL(key: string): Promise<number> {
+        purgeExpired(key);
+        if (!values.has(key)) return -2;
+        const resetAt = expiresAt.get(key);
+        return resetAt === undefined ? -1 : resetAt - Date.now();
+      },
+      async pExpire(key: string, ttlMs: number): Promise<unknown> {
+        expiresAt.set(key, Date.now() + ttlMs);
+        return 1;
+      },
+      async del(key: string): Promise<unknown> {
+        values.delete(key);
+        expiresAt.delete(key);
+        return 1;
+      },
+      async quit(): Promise<unknown> {
+        return 'OK';
+      },
+    };
+  }
+
+  test('increments a shared key within one TTL window', async () => {
+    const cache = new RedisCache(createFakeRedisClient());
+
+    const first = await cache.increment('auth:rate-limit:k', 60_000);
+    const second = await cache.increment('auth:rate-limit:k', 60_000);
+
+    expect(first.value).toBe(1);
+    expect(second.value).toBe(2);
+    expect(second.resetAt).toBeGreaterThan(Date.now());
+    await cache.close();
+  });
+
+  test('stores JSON values with TTL', async () => {
+    const cache = new RedisCache(createFakeRedisClient());
+
+    await cache.set('quote:k', { n: 42 }, 0.02);
+    expect(await cache.get('quote:k')).toEqual({ n: 42 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await cache.get('quote:k')).toBeNull();
+    await cache.close();
+  });
+
+  test('resets the counter after TTL expires', async () => {
+    const cache = new RedisCache(createFakeRedisClient());
+
+    const first = await cache.increment('auth:rate-limit:k', 20);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const second = await cache.increment('auth:rate-limit:k', 20);
+
+    expect(first.value).toBe(1);
+    expect(second.value).toBe(1);
+    await cache.close();
   });
 });
 

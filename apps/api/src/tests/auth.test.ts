@@ -26,8 +26,9 @@ mock.module('bcryptjs', () => ({ default: bcryptMock, ...bcryptMock }));
 
 // Import the service AFTER registering the module mock.
 const { AuthService } = await import('../../../../modules/auth/service.js');
+const { InMemoryCache } = await import('../../../../modules/shared/cache/index.js');
 const { parseApiKey } = await import('@finlayer/utils');
-const { UnauthorizedError } = await import('../../../../modules/shared/errors/index.js');
+const { UnauthorizedError, RateLimitError } = await import('../../../../modules/shared/errors/index.js');
 const { createMockSql, createTestUserId } = await import('./setup.js');
 
 describe('AuthService — API key validation (issue #14)', () => {
@@ -121,5 +122,57 @@ describe('AuthService — API key validation (issue #14)', () => {
     const pb = parseApiKey(b.secret)!;
     expect(pa.keyId).not.toBe(pb.keyId);
     expect(pa.prefix).toBe('fl_live');
+  });
+
+  test('rate limit is enforced across service instances sharing a cache', async () => {
+    const cache = new InMemoryCache();
+    const firstService = new AuthService(mockSql as never, {
+      rateLimitCache: cache,
+      rateLimitWindowMs: 60_000,
+    });
+    const secondService = new AuthService(mockSql as never, {
+      rateLimitCache: cache,
+      rateLimitWindowMs: 60_000,
+    });
+
+    const userId = createTestUserId();
+    const { secret } = await firstService.createApiKey(userId, {
+      name: 'shared-limit',
+      scopes: ['swap:read'],
+      rate_limit: 1,
+    });
+
+    await firstService.validateApiKey(secret);
+    expect(cache.size()).toBe(1);
+    await expect(secondService.validateApiKey(secret)).rejects.toBeInstanceOf(RateLimitError);
+
+    await cache.close();
+  });
+
+  test('in-memory rate limit counters expire after the window', async () => {
+    const cache = new InMemoryCache();
+    service = new AuthService(mockSql as never, {
+      rateLimitCache: cache,
+      rateLimitWindowMs: 20,
+    });
+    const userId = createTestUserId();
+    const secrets = await Promise.all(
+      Array.from({ length: 3 }, (_, i) =>
+        service.createApiKey(userId, {
+          name: `ttl-${i}`,
+          scopes: ['swap:read'],
+        })
+      )
+    );
+
+    for (const { secret } of secrets) {
+      await service.validateApiKey(secret);
+    }
+
+    expect(cache.size()).toBe(3);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(cache.size()).toBe(0);
+
+    await cache.close();
   });
 });
