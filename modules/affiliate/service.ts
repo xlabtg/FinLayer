@@ -7,6 +7,7 @@ import type { SQL } from 'postgres';
 import { generateUUID } from '@finlayer/utils';
 import type { UUID, Affiliate, AffiliateLink, AffiliateStats, AffiliateLinkCreateRequest } from '@finlayer/types';
 import { logger } from '../shared/utils/logger.js';
+import { assertAffiliateRedirectTargetAllowed } from './redirect-policy.js';
 
 interface DbAffiliate {
   id: string;
@@ -61,6 +62,8 @@ export class AffiliateService {
    * Create an affiliate tracking link.
    */
   async createLink(affiliateId: UUID, request: AffiliateLinkCreateRequest): Promise<AffiliateLink> {
+    assertAffiliateRedirectTargetAllowed(request.target_url);
+
     const shortCode = `${affiliateId.substring(0, 8)}_${generateUUID().substring(0, 8)}`;
     const baseUrl = process.env['API_BASE_URL'] ?? 'http://localhost:3000';
     const shortUrl = `${baseUrl}/r/${shortCode}`;
@@ -128,12 +131,21 @@ export class AffiliateService {
    */
   async recordClick(shortCode: string): Promise<string | null> {
     const [row] = await this.sql<{ target_url: string }[]>`
+      SELECT target_url
+      FROM affiliate_links
+      WHERE short_code = ${shortCode}
+    `;
+    if (!row) return null;
+
+    assertAffiliateRedirectTargetAllowed(row.target_url);
+
+    await this.sql`
       UPDATE affiliate_links
       SET clicks = clicks + 1
       WHERE short_code = ${shortCode}
-      RETURNING target_url
     `;
-    return row?.target_url ?? null;
+
+    return row.target_url;
   }
 
   /**

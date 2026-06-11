@@ -152,6 +152,6 @@ export async function affiliateRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    return reply.redirect(302, targetUrl);
+    return reply.status(302).header('Location', targetUrl).send();
   });
 }

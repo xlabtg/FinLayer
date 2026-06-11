@@ -214,6 +214,52 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return Promise.resolve([row]);
       }
 
+      if (query.startsWith('INSERT INTO AFFILIATE_LINKS')) {
+        const row: MockRow = {
+          id: values[0],
+          affiliate_id: values[1],
+          target_url: values[2],
+          short_code: values[3],
+          label: values[4],
+          clicks: 0,
+          conversions: 0,
+          created_at: new Date(),
+        };
+        initTable('affiliate_links').push(row);
+        return Promise.resolve([row]);
+      }
+
+      if (query.startsWith('SELECT') && query.includes('FROM AFFILIATE_LINKS')) {
+        const links = initTable('affiliate_links');
+        if (query.includes('WHERE AFFILIATE_ID =')) {
+          const affiliateId = values[0];
+          return Promise.resolve(
+            links
+              .filter(r => r['affiliate_id'] === affiliateId)
+              .sort((a, b) =>
+                (b['created_at'] as Date).getTime() - (a['created_at'] as Date).getTime()
+              )
+          );
+        }
+        if (query.includes('WHERE SHORT_CODE =')) {
+          const shortCode = values[0];
+          return Promise.resolve(links.filter(r => r['short_code'] === shortCode));
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('UPDATE AFFILIATE_LINKS')) {
+        const shortCode = values[0];
+        const row = initTable('affiliate_links').find(r => r['short_code'] === shortCode);
+        if (row) {
+          row['clicks'] = Number(row['clicks'] ?? 0) + 1;
+          if (query.includes('RETURNING TARGET_URL')) {
+            return Promise.resolve([{ target_url: row['target_url'] }]);
+          }
+        }
+        return Promise.resolve([]);
+      }
+
       // ─── Earn Positions ─────────────────────────────────────────────────────
       if (query.startsWith('INSERT INTO EARN_POSITIONS')) {
         const row: MockRow = {

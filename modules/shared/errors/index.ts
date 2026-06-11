@@ -205,6 +205,26 @@ export class InvalidWebhookSignatureError extends FinLayerError {
   }
 }
 
+// ─── Affiliate Errors ────────────────────────────────────────────────────────
+
+export class AffiliateRedirectTargetNotAllowedError extends FinLayerError {
+  constructor(targetOrigin: string, allowedOrigins: string[]) {
+    super(
+      'AFFILIATE_REDIRECT_TARGET_NOT_ALLOWED',
+      `Affiliate redirect target origin is not allowed: ${targetOrigin}`,
+      'affiliate',
+      400,
+      {
+        details: {
+          target_origin: targetOrigin,
+          allowed_origins: allowedOrigins,
+        },
+        suggestion: 'Use an affiliate redirect target from the configured allow-list',
+      }
+    );
+  }
+}
+
 // ─── Earn Errors ──────────────────────────────────────────────────────────────
 
 export class EarnStrategyNotFoundError extends FinLayerError {
