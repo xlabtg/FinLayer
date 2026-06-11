@@ -8,6 +8,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ApiKey, ApiKeyScope } from '@finlayer/types';
 import { AuthService } from './service.js';
 import { UnauthorizedError, FinLayerError } from '../shared/errors/index.js';
+import { buildCacheFromEnv } from '../shared/cache/index.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -22,8 +23,12 @@ declare module 'fastify' {
 }
 
 export default fp(async function authPlugin(fastify: FastifyInstance) {
-  const authService = new AuthService(fastify.sql);
+  const rateLimitCache = await buildCacheFromEnv();
+  const authService = new AuthService(fastify.sql, { rateLimitCache });
   fastify.decorate('authService', authService);
+  fastify.addHook('onClose', async () => {
+    await rateLimitCache.close();
+  });
 
   // Extract Bearer token from Authorization header
   fastify.decorate('authenticate', async function (
