@@ -123,6 +123,11 @@ export interface SwapQuoteResult {
 
 export interface SwapExecuteParams {
   providerQuoteId: string;
+  fromAsset: string;
+  toAsset: string;
+  fromAmount: Numeric;
+  toAmount: Numeric;
+  rate: Numeric;
   recipientAddress: string;
   refundAddress?: string;
 }
@@ -131,6 +136,8 @@ export interface SwapExecuteResult {
   providerTxId: string;
   depositAddress: string;
   status: TransactionStatus;
+  fromAmount?: Numeric;
+  toAmount?: Numeric;
 }
 
 export interface SwapStatusResult {

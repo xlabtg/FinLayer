@@ -149,6 +149,28 @@ describe('Swap Flow', () => {
       expect(tx.revenue_event_id).toBeDefined();
     });
 
+    test('passes the saved quote amounts to the provider on execution', async () => {
+      const quoteRows = (mockSql._tables.get('swap_quotes') ?? []) as Record<string, unknown>[];
+      const quoteRow = quoteRows.find((row) => row['id'] === quoteId)!;
+
+      await swapService.executeSwap(userId, {
+        quote_id: quoteId,
+        recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+        idempotency_key: generateUUID(),
+      });
+
+      expect(mockProvider.lastExecuteParams).toEqual(expect.objectContaining({
+        providerQuoteId: quoteRow['provider_quote_id'],
+        fromAsset: quoteRow['from_asset'],
+        toAsset: quoteRow['to_asset'],
+        fromAmount: quoteRow['from_amount'],
+        toAmount: quoteRow['to_amount'],
+        rate: quoteRow['rate'],
+      }));
+      expect(mockProvider.lastExecuteParams!.fromAmount).not.toBe('0');
+      expect(mockProvider.lastExecuteParams!.toAmount).not.toBe('0');
+    });
+
     test('throws IdempotencyError when idempotency_key is missing', async () => {
       await expect(swapService.executeSwap(userId, {
         quote_id: quoteId,

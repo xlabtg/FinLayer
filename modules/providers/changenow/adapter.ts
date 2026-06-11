@@ -30,24 +30,26 @@ interface ChangeNOWMinAmountResponse {
 }
 
 interface ChangeNOWEstimatedResponse {
-  fromAmount: number;
-  toAmount: number;
+  fromAmount: number | string;
+  toAmount: number | string;
   flow: string;
   type: string;
-  validUntil: string;
-  transactionSpeedForecast: string;
-  networkFee: number | null;
+  validUntil: string | null;
+  transactionSpeedForecast: string | null;
+  networkFee?: number | string | null;
+  withdrawalFee?: number | string | null;
+  rateId?: string | null;
 }
 
 interface ChangeNOWExchangeResponse {
   id: string;
   type: string;
   status: string;
-  validUntil: string;
+  validUntil: string | null;
   payinAddress: string;
   payoutAddress: string;
-  fromAmount: number;
-  toAmount: number;
+  fromAmount: number | string;
+  toAmount: number | string;
   fromCurrency: string;
   toCurrency: string;
 }
@@ -114,8 +116,16 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
     let minAmount = '0.001';
     let maxAmount = '999999';
     try {
+      const minQuery = new URLSearchParams({
+        fromCurrency,
+        toCurrency,
+        flow: 'fixed-rate',
+      });
+      if (fromNetwork) minQuery.set('fromNetwork', fromNetwork.toLowerCase());
+      if (toNetwork) minQuery.set('toNetwork', toNetwork.toLowerCase());
+
       const minRes = await this.request<ChangeNOWMinAmountResponse>(
-        `/exchange/min-amount?fromCurrency=${fromCurrency}&toCurrency=${toCurrency}&flow=standard`,
+        `/exchange/min-amount?${minQuery.toString()}`,
         'GET'
       );
       minAmount = String(minRes.minAmount);
@@ -132,21 +142,35 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
     }
 
     // 2. Get estimated exchange amount
+    const estimateQuery = new URLSearchParams({
+      fromCurrency,
+      toCurrency,
+      fromAmount: amount,
+      flow: 'fixed-rate',
+      type: 'direct',
+      useRateId: 'true',
+    });
+    if (fromNetwork) estimateQuery.set('fromNetwork', fromNetwork.toLowerCase());
+    if (toNetwork) estimateQuery.set('toNetwork', toNetwork.toLowerCase());
+
     const estimated = await this.request<ChangeNOWEstimatedResponse>(
-      `/exchange/estimated-amount?fromCurrency=${fromCurrency}&toCurrency=${toCurrency}&fromAmount=${amount}&flow=standard&type=direct`,
+      `/exchange/estimated-amount?${estimateQuery.toString()}`,
       'GET'
     );
 
-    if (!estimated.toAmount || estimated.toAmount <= 0) {
+    const estimatedFromAmount = String(estimated.fromAmount);
+    const estimatedToAmount = String(estimated.toAmount);
+    if (compareNumericStrings(estimatedToAmount, '0') <= 0) {
       throw new InsufficientLiquidityError(fromAsset, toAsset);
     }
 
-    // Calculate exchange rate
-    const rate = (estimated.toAmount / estimated.fromAmount).toFixed(8);
-    const networkFee = estimated.networkFee ? String(estimated.networkFee) : '0';
+    if (!estimated.rateId) {
+      throw new ProviderError(this.name, 'fixed-rate quote did not include rateId');
+    }
 
-    // Generate a quote ID (ChangeNOW doesn't have persistent quotes, we generate one)
-    const providerQuoteId = `cn_${fromCurrency}_${toCurrency}_${Date.now()}`;
+    // Calculate exchange rate
+    const rate = (Number(estimated.toAmount) / Number(estimated.fromAmount)).toFixed(8);
+    const networkFee = estimated.networkFee ?? estimated.withdrawalFee ?? '0';
 
     logger.debug('ChangeNOW quote obtained', {
       fromAsset,
@@ -154,48 +178,56 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
       fromAmount: amount,
       toAmount: estimated.toAmount,
       rate,
+      providerQuoteId: estimated.rateId,
     });
 
     return {
-      providerQuoteId,
+      providerQuoteId: estimated.rateId,
       fromAsset: fromAsset.toUpperCase(),
       toAsset: toAsset.toUpperCase(),
-      fromAmount: String(estimated.fromAmount),
-      toAmount: String(estimated.toAmount),
+      fromAmount: estimatedFromAmount,
+      toAmount: estimatedToAmount,
       rate,
-      networkFee,
+      networkFee: String(networkFee),
       feeAsset: toAsset.toUpperCase(),
       estimatedDurationSeconds: this.parseDuration(estimated.transactionSpeedForecast),
-      expiresAt: futureISO(QUOTE_TTL_SECONDS),
+      expiresAt: estimated.validUntil ?? futureISO(QUOTE_TTL_SECONDS),
       minAmount,
       maxAmount,
     };
   }
 
   async executeSwap(params: SwapExecuteParams): Promise<SwapExecuteResult> {
-    // Extract currency info from providerQuoteId (cn_btc_eth_timestamp)
-    const parts = params.providerQuoteId.split('_');
-    const fromCurrency = parts[1] ?? 'btc';
-    const toCurrency = parts[2] ?? 'eth';
+    const fromCurrency = params.fromAsset.toLowerCase();
+    const toCurrency = params.toAsset.toLowerCase();
 
-    // ChangeNOW: create exchange
-    const body = {
+    const body: Record<string, string> = {
       fromCurrency,
       toCurrency,
-      fromAmount: 0, // Will be determined by deposit
-      toAmount: 0,
+      fromAmount: params.fromAmount,
       address: params.recipientAddress,
-      refundAddress: params.refundAddress,
-      flow: 'standard',
+      flow: 'fixed-rate',
       type: 'direct',
+      rateId: params.providerQuoteId,
     };
+    if (params.refundAddress) {
+      body['refundAddress'] = params.refundAddress;
+    }
 
     const response = await this.request<ChangeNOWExchangeResponse>('/exchange', 'POST', body);
+    if (
+      compareNumericStrings(String(response.fromAmount), params.fromAmount) !== 0 ||
+      compareNumericStrings(String(response.toAmount), params.toAmount) !== 0
+    ) {
+      throw new ProviderError(this.name, 'fixed-rate execution amount does not match saved quote');
+    }
 
     return {
       providerTxId: response.id,
       depositAddress: response.payinAddress,
       status: 'pending',
+      fromAmount: String(response.fromAmount),
+      toAmount: String(response.toAmount),
     };
   }
 
@@ -205,7 +237,7 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
     return {
       providerTxId: response.id,
       status: STATUS_MAP[response.status] ?? 'pending',
-      txHash: response.payoutHash ?? undefined,
+      ...(response.payoutHash ? { txHash: response.payoutHash } : {}),
     };
   }
 
@@ -237,8 +269,8 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
     return {
       providerTxId,
       status: STATUS_MAP[payload.status] ?? 'pending',
-      txHash: payload.payoutHash ?? undefined,
       signatureValid,
+      ...(payload.payoutHash ? { txHash: payload.payoutHash } : {}),
     };
   }
 
@@ -280,7 +312,7 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
     return res.json() as Promise<T>;
   }
 
-  private parseDuration(forecast: string): number {
+  private parseDuration(forecast: string | null): number {
     // e.g. "5-10" minutes → average in seconds
     if (!forecast) return 600;
     const match = forecast.match(/(\d+)(?:-(\d+))?/);
