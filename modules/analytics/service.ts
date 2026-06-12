@@ -15,11 +15,11 @@ import type { Numeric, ProviderDomain, UUID } from '@finlayer/types';
 
 export type AnalyticsPeriod = '24h' | '7d' | '30d' | '90d' | 'all';
 
-const PERIOD_SQL: Record<AnalyticsPeriod, string | null> = {
-  '24h': "NOW() - INTERVAL '24 hours'",
-  '7d': "NOW() - INTERVAL '7 days'",
-  '30d': "NOW() - INTERVAL '30 days'",
-  '90d': "NOW() - INTERVAL '90 days'",
+const PERIOD_LOOKBACK_INTERVALS: Record<AnalyticsPeriod, string | null> = {
+  '24h': '24 hours',
+  '7d': '7 days',
+  '30d': '30 days',
+  '90d': '90 days',
   all: null,
 };
 
@@ -121,17 +121,12 @@ export class AnalyticsService {
     };
   }
 
-  private sinceClause(period: AnalyticsPeriod, alias: string): string {
-    const expr = PERIOD_SQL[period];
-    return expr ? `${alias}.created_at >= ${expr}` : '1 = 1';
-  }
-
   private async totals(
     period: AnalyticsPeriod,
     affiliateId?: UUID
   ): Promise<RevenueDashboard['totals']> {
-    const sinceClause = this.sinceClause(period, 't');
-    const affiliateClause = affiliateId ? `AND t.affiliate_id = '${affiliateId}'` : '';
+    const lookbackInterval = PERIOD_LOOKBACK_INTERVALS[period];
+    const affiliateFilter = affiliateId ?? null;
 
     const [row] = await this.sql.unsafe(`
       SELECT
@@ -143,9 +138,9 @@ export class AnalyticsService {
         COUNT(DISTINCT t.affiliate_id)::int AS active_affiliates
       FROM transactions t
       LEFT JOIN revenue_events re ON re.transaction_id = t.id
-      WHERE ${sinceClause}
-        ${affiliateClause}
-    `) as Array<{
+      WHERE (($1::text) IS NULL OR t.created_at >= NOW() - ($1::text)::interval)
+        AND ($2::uuid IS NULL OR t.affiliate_id = $2::uuid)
+    `, [lookbackInterval, affiliateFilter]) as Array<{
       transaction_count: number;
       total_volume: string;
       total_fees: string;
@@ -168,8 +163,8 @@ export class AnalyticsService {
     period: AnalyticsPeriod,
     affiliateId?: UUID
   ): Promise<DomainBreakdown[]> {
-    const sinceClause = this.sinceClause(period, 't');
-    const affiliateClause = affiliateId ? `AND t.affiliate_id = '${affiliateId}'` : '';
+    const lookbackInterval = PERIOD_LOOKBACK_INTERVALS[period];
+    const affiliateFilter = affiliateId ?? null;
 
     const rows = await this.sql.unsafe(`
       SELECT
@@ -181,11 +176,11 @@ export class AnalyticsService {
         COALESCE(SUM(re.total_fee * re.affiliate_share), 0)::text AS affiliate_revenue
       FROM transactions t
       LEFT JOIN revenue_events re ON re.transaction_id = t.id
-      WHERE ${sinceClause}
-        ${affiliateClause}
+      WHERE (($1::text) IS NULL OR t.created_at >= NOW() - ($1::text)::interval)
+        AND ($2::uuid IS NULL OR t.affiliate_id = $2::uuid)
       GROUP BY t.domain
       ORDER BY transaction_count DESC
-    `) as Array<{
+    `, [lookbackInterval, affiliateFilter]) as Array<{
       domain: ProviderDomain;
       transaction_count: number;
       total_volume: string;
@@ -208,8 +203,8 @@ export class AnalyticsService {
     period: AnalyticsPeriod,
     affiliateId?: UUID
   ): Promise<ProviderBreakdown[]> {
-    const sinceClause = this.sinceClause(period, 't');
-    const affiliateClause = affiliateId ? `AND t.affiliate_id = '${affiliateId}'` : '';
+    const lookbackInterval = PERIOD_LOOKBACK_INTERVALS[period];
+    const affiliateFilter = affiliateId ?? null;
 
     const rows = await this.sql.unsafe(`
       SELECT
@@ -222,11 +217,11 @@ export class AnalyticsService {
       FROM transactions t
       JOIN providers p ON p.id = t.provider_id
       LEFT JOIN revenue_events re ON re.transaction_id = t.id
-      WHERE ${sinceClause}
-        ${affiliateClause}
+      WHERE (($1::text) IS NULL OR t.created_at >= NOW() - ($1::text)::interval)
+        AND ($2::uuid IS NULL OR t.affiliate_id = $2::uuid)
       GROUP BY p.name, p.domain
       ORDER BY transaction_count DESC
-    `) as Array<{
+    `, [lookbackInterval, affiliateFilter]) as Array<{
       provider_name: string;
       domain: ProviderDomain;
       transaction_count: number;
@@ -254,25 +249,25 @@ export class AnalyticsService {
     period: AnalyticsPeriod,
     affiliateId?: UUID
   ): Promise<TimeseriesPoint[]> {
-    const sinceClause = this.sinceClause(period, 't');
-    const affiliateClause = affiliateId ? `AND t.affiliate_id = '${affiliateId}'` : '';
+    const lookbackInterval = PERIOD_LOOKBACK_INTERVALS[period];
+    const affiliateFilter = affiliateId ?? null;
     // Hour buckets for 24h, day buckets otherwise.
-    const bucket = period === '24h' ? "date_trunc('hour', t.created_at)" : "date_trunc('day', t.created_at)";
+    const bucketGranularity = period === '24h' ? 'hour' : 'day';
 
     const rows = await this.sql.unsafe(`
       SELECT
-        ${bucket} AS bucket,
+        date_trunc($3::text, t.created_at) AS bucket,
         COUNT(t.id)::int AS transaction_count,
         COALESCE(SUM(re.total_fee), 0)::text AS total_fees,
         COALESCE(SUM(re.total_fee * re.platform_share), 0)::text AS platform_revenue,
         COALESCE(SUM(re.total_fee * re.affiliate_share), 0)::text AS affiliate_revenue
       FROM transactions t
       LEFT JOIN revenue_events re ON re.transaction_id = t.id
-      WHERE ${sinceClause}
-        ${affiliateClause}
-      GROUP BY ${bucket}
-      ORDER BY ${bucket} ASC
-    `) as Array<{
+      WHERE (($1::text) IS NULL OR t.created_at >= NOW() - ($1::text)::interval)
+        AND ($2::uuid IS NULL OR t.affiliate_id = $2::uuid)
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `, [lookbackInterval, affiliateFilter, bucketGranularity]) as Array<{
       bucket: Date | string;
       transaction_count: number;
       total_fees: string;
@@ -290,7 +285,7 @@ export class AnalyticsService {
   }
 
   private async topAffiliates(period: AnalyticsPeriod, limit = 10): Promise<TopAffiliate[]> {
-    const sinceClause = this.sinceClause(period, 're');
+    const lookbackInterval = PERIOD_LOOKBACK_INTERVALS[period];
 
     const rows = await this.sql.unsafe(`
       SELECT
@@ -300,11 +295,11 @@ export class AnalyticsService {
         COUNT(re.id)::int AS conversions
       FROM affiliates a
       JOIN revenue_events re ON re.affiliate_id = a.id
-      WHERE ${sinceClause}
+      WHERE (($1::text) IS NULL OR re.created_at >= NOW() - ($1::text)::interval)
       GROUP BY a.id, a.code
       ORDER BY revenue::numeric DESC
-      LIMIT ${limit}
-    `) as Array<{
+      LIMIT $2::int
+    `, [lookbackInterval, limit]) as Array<{
       affiliate_id: UUID;
       code: string;
       revenue: string;
