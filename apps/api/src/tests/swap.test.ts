@@ -170,6 +170,20 @@ describe('Swap Flow', () => {
       expect(tx.revenue_event_id).toBeDefined();
     });
 
+    test('returns provider_tx_id from the initial execute response', async () => {
+      const tx = await swapService.executeSwap(userId, {
+        quote_id: quoteId,
+        recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+        idempotency_key: generateUUID(),
+      });
+
+      const txRows = mockSql._tables.get('transactions') ?? [];
+      const txRow = txRows.find((row) => row['id'] === tx.id);
+
+      expect(txRow!['provider_tx_id']).toBeTruthy();
+      expect(tx.provider_tx_id).toBe(txRow!['provider_tx_id']);
+    });
+
     test('passes the saved quote amounts to the provider on execution', async () => {
       const quoteRows = (mockSql._tables.get('swap_quotes') ?? []) as Record<string, unknown>[];
       const quoteRow = quoteRows.find((row) => row['id'] === quoteId)!;
