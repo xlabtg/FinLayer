@@ -370,6 +370,29 @@ describe('Swap Flow', () => {
       expect(status.status).toBeDefined();
     });
 
+    test('does not roll processing transactions back to pending during provider polling', async () => {
+      const quoteResponse = await swapService.getQuote(userId, {
+        from_asset: 'BTC',
+        to_asset: 'ETH',
+        amount: '0.5',
+      });
+
+      const tx = await swapService.executeSwap(userId, {
+        quote_id: quoteResponse.best_quote_id,
+        recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+        idempotency_key: generateUUID(),
+      });
+
+      const row = (mockSql._tables.get('transactions') ?? []).find(r => r['id'] === tx.id)!;
+      row['status'] = 'processing';
+      mockProvider.setTxStatus(String(row['provider_tx_id']), 'pending');
+
+      const status = await swapService.getSwapStatus(tx.id, userId);
+
+      expect(status.status).toBe('processing');
+      expect(row['status']).toBe('processing');
+    });
+
     test('throws TransactionNotFoundError for unknown tx', async () => {
       const { TransactionNotFoundError } = await import('../../../../modules/shared/errors/index.js');
       await expect(swapService.getSwapStatus(generateUUID(), userId))

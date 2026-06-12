@@ -494,13 +494,23 @@ export class SwapService {
       if (provider && row.provider_tx_id) {
         try {
           const statusResult = await provider.getTransactionStatus(row.provider_tx_id);
-          if (statusResult.status !== row.status) {
-            await this.sql`
-              UPDATE transactions
-              SET status = ${statusResult.status}, updated_at = NOW()
-              WHERE id = ${txId}
-            `;
-            row.status = statusResult.status;
+          const nextStatus = statusResult.status;
+          if (nextStatus !== row.status) {
+            if (isValidSwapStatusTransition(row.status, nextStatus)) {
+              await this.sql`
+                UPDATE transactions
+                SET status = ${nextStatus}, updated_at = NOW()
+                WHERE id = ${txId}
+              `;
+              row.status = nextStatus;
+            } else {
+              logger.info('Swap provider status ignored: no valid transition', {
+                txId,
+                provider: row.provider_name,
+                from: row.status,
+                to: nextStatus,
+              });
+            }
           }
         } catch (err) {
           logger.warn('Failed to refresh status from provider', { txId, error: String(err) });
