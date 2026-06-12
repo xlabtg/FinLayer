@@ -19,6 +19,7 @@ const QuoteRequestSchema = z.object({
   from_network: z.string().optional(),
   to_network: z.string().optional(),
   affiliate_id: z.string().uuid().optional(),
+  affiliate_link_id: z.string().uuid().optional(),
   idempotency_key: z.string().min(8).max(128).optional(),
 });
 
@@ -27,6 +28,7 @@ const ExecuteRequestSchema = z.object({
   recipient_address: z.string().min(10, 'recipient_address is required'),
   refund_address: z.string().min(10).optional(),
   affiliate_id: z.string().uuid().optional(),
+  affiliate_link_id: z.string().uuid().optional(),
   idempotency_key: z.string().min(8).max(128),
 });
 
@@ -100,6 +102,7 @@ export async function swapRoutes(fastify: FastifyInstance): Promise<void> {
           from_network: { type: 'string', description: 'Source network, e.g. bitcoin' },
           to_network: { type: 'string', description: 'Target network, e.g. ethereum' },
           affiliate_id: { type: 'string', format: 'uuid', description: 'Affiliate ID for revenue tracking' },
+          affiliate_link_id: { type: 'string', format: 'uuid', description: 'Affiliate link ID for per-link conversion tracking' },
         },
       },
       response: {
@@ -147,6 +150,7 @@ export async function swapRoutes(fastify: FastifyInstance): Promise<void> {
           recipient_address: { type: 'string', description: 'Destination address for output asset' },
           refund_address: { type: 'string', description: 'Address to refund if exchange fails' },
           affiliate_id: { type: 'string', format: 'uuid', description: 'Affiliate ID for revenue tracking' },
+          affiliate_link_id: { type: 'string', format: 'uuid', description: 'Affiliate link ID for per-link conversion tracking' },
           idempotency_key: { type: 'string', minLength: 8, maxLength: 128, description: 'Unique key to prevent duplicate transactions' },
         },
       },

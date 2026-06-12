@@ -32,6 +32,17 @@ interface DbAffiliateLink {
   created_at: Date;
 }
 
+export interface AffiliateClickResult {
+  target_url: string;
+  affiliate_id: UUID;
+  affiliate_link_id: UUID;
+}
+
+export interface AffiliateLinkAttribution {
+  affiliate_id: UUID;
+  affiliate_link_id: UUID;
+}
+
 export class AffiliateService {
   constructor(private readonly sql: SQL) {}
 
@@ -129,9 +140,9 @@ export class AffiliateService {
   /**
    * Record a click on an affiliate link.
    */
-  async recordClick(shortCode: string): Promise<string | null> {
-    const [row] = await this.sql<{ target_url: string }[]>`
-      SELECT target_url
+  async recordClick(shortCode: string): Promise<AffiliateClickResult | null> {
+    const [row] = await this.sql<{ id: string; affiliate_id: string; target_url: string }[]>`
+      SELECT id, affiliate_id, target_url
       FROM affiliate_links
       WHERE short_code = ${shortCode}
     `;
@@ -145,7 +156,11 @@ export class AffiliateService {
       WHERE short_code = ${shortCode}
     `;
 
-    return row.target_url;
+    return {
+      target_url: row.target_url,
+      affiliate_id: row.affiliate_id,
+      affiliate_link_id: row.id,
+    };
   }
 
   /**
@@ -159,6 +174,41 @@ export class AffiliateService {
     if (!row) return false;
     if (payerUserId && row.user_id === payerUserId) return false;
     return true;
+  }
+
+  /**
+   * Validate a link-level attribution source and ensure it belongs to the
+   * optional affiliate_id supplied alongside the request.
+   */
+  async validateAffiliateLink(
+    affiliateLinkId: UUID,
+    affiliateId?: UUID | null,
+    payerUserId?: UUID
+  ): Promise<AffiliateLinkAttribution | null> {
+    const [row] = await this.sql<{ id: string; affiliate_id: string; user_id: string }[]>`
+      SELECT l.id, l.affiliate_id, a.user_id
+      FROM affiliate_links l
+      JOIN affiliates a ON a.id = l.affiliate_id
+      WHERE l.id = ${affiliateLinkId}
+    `;
+    if (!row) return null;
+    if (affiliateId && row.affiliate_id !== affiliateId) return null;
+    if (payerUserId && row.user_id === payerUserId) return null;
+    return {
+      affiliate_id: row.affiliate_id,
+      affiliate_link_id: row.id,
+    };
+  }
+
+  /**
+   * Record a paid conversion for one concrete affiliate link.
+   */
+  async recordConversion(affiliateLinkId: UUID, affiliateId: UUID): Promise<void> {
+    await this.sql`
+      UPDATE affiliate_links
+      SET conversions = conversions + 1
+      WHERE id = ${affiliateLinkId} AND affiliate_id = ${affiliateId}
+    `;
   }
 
   private mapAffiliate(row: DbAffiliate): Affiliate {

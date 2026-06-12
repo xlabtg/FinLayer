@@ -18,7 +18,13 @@ interface CreateRevenueEventParams {
   totalFee: string;
   feeAsset: string;
   affiliateId?: UUID | null;
+  affiliateLinkId?: UUID | null;
   payerUserId?: UUID | null;
+}
+
+interface RevenueAttribution {
+  affiliateId: UUID | null;
+  affiliateLinkId: UUID | null;
 }
 
 export class RevenueService {
@@ -35,14 +41,44 @@ export class RevenueService {
     affiliateId: UUID | null | undefined,
     payerUserId: UUID
   ): Promise<UUID | null> {
-    if (!affiliateId) return null;
+    const attribution = await this.validateRevenueAttribution(affiliateId, payerUserId);
+    return attribution.affiliateId;
+  }
 
-    const isValid = await this.affiliateService.validateAffiliateId(affiliateId, payerUserId);
+  async validateRevenueAttribution(
+    affiliateId: UUID | null | undefined,
+    payerUserId: UUID,
+    affiliateLinkId?: UUID | null
+  ): Promise<RevenueAttribution> {
+    if (!affiliateId && !affiliateLinkId) {
+      return { affiliateId: null, affiliateLinkId: null };
+    }
+
+    if (affiliateLinkId) {
+      const link = await this.affiliateService.validateAffiliateLink(
+        affiliateLinkId,
+        affiliateId ?? null,
+        payerUserId
+      );
+      if (!link) {
+        throw new ValidationError('Invalid affiliate attribution for this user', {
+          affiliate_id: affiliateId ?? null,
+          affiliate_link_id: affiliateLinkId,
+        });
+      }
+
+      return {
+        affiliateId: link.affiliate_id,
+        affiliateLinkId: link.affiliate_link_id,
+      };
+    }
+
+    const isValid = await this.affiliateService.validateAffiliateId(affiliateId!, payerUserId);
     if (!isValid) {
       throw new ValidationError('Invalid affiliate_id for this user', { affiliate_id: affiliateId });
     }
 
-    return affiliateId;
+    return { affiliateId: affiliateId!, affiliateLinkId: null };
   }
 
   /**
@@ -50,25 +86,17 @@ export class RevenueService {
    * Returns the revenue_event_id.
    */
   async createRevenueEvent(params: CreateRevenueEventParams): Promise<UUID> {
-    const { transactionId, domain, totalFee, feeAsset, affiliateId, payerUserId } = params;
+    const { transactionId, domain, totalFee, feeAsset, affiliateId, affiliateLinkId, payerUserId } = params;
     const eventId = generateUUID();
-    let effectiveAffiliateId = affiliateId ?? null;
-
-    if (effectiveAffiliateId) {
-      const isValid = await this.affiliateService.validateAffiliateId(
-        effectiveAffiliateId,
-        payerUserId ?? undefined
-      );
-      if (!isValid) {
-        logger.warn('Affiliate attribution rejected for revenue event', {
-          transactionId,
-          domain,
-          affiliateId: effectiveAffiliateId,
-          payerUserId: payerUserId ?? null,
-        });
-        effectiveAffiliateId = null;
-      }
-    }
+    const attribution = await this.resolveRevenueAttributionForEvent(
+      transactionId,
+      domain,
+      affiliateId ?? null,
+      affiliateLinkId ?? null,
+      payerUserId ?? undefined
+    );
+    const effectiveAffiliateId = attribution.affiliateId;
+    const effectiveAffiliateLinkId = attribution.affiliateLinkId;
 
     const platformShare = this.config.platformShareRatio;
     const affiliateShare = effectiveAffiliateId ? this.config.affiliateShareRatio : 0;
@@ -80,12 +108,12 @@ export class RevenueService {
         id, transaction_id, source_domain,
         total_fee, fee_asset,
         platform_share, affiliate_share,
-        affiliate_id
+        affiliate_id, affiliate_link_id
       ) VALUES (
         ${eventId}, ${transactionId}, ${domain},
         ${totalFee}, ${feeAsset},
         ${actualPlatformShare}, ${affiliateShare},
-        ${effectiveAffiliateId}
+        ${effectiveAffiliateId}, ${effectiveAffiliateLinkId}
       )
     `;
 
@@ -98,9 +126,10 @@ export class RevenueService {
       platformShare: actualPlatformShare,
       affiliateShare,
       hasAffiliate: !!effectiveAffiliateId,
+      affiliateLinkId: effectiveAffiliateLinkId,
     });
 
-    // Update affiliate total_earned if applicable
+    // Update affiliate aggregates if applicable.
     if (effectiveAffiliateId) {
       const affiliateAmount = multiplyNumericStrings(totalFee, String(affiliateShare));
       await this.sql`
@@ -108,9 +137,62 @@ export class RevenueService {
         SET total_earned = total_earned + ${affiliateAmount}, updated_at = NOW()
         WHERE id = ${effectiveAffiliateId}
       `;
+      if (effectiveAffiliateLinkId) {
+        await this.affiliateService.recordConversion(effectiveAffiliateLinkId, effectiveAffiliateId);
+      }
     }
 
     return eventId;
+  }
+
+  private async resolveRevenueAttributionForEvent(
+    transactionId: UUID,
+    domain: ProviderDomain,
+    affiliateId: UUID | null,
+    affiliateLinkId: UUID | null,
+    payerUserId?: UUID
+  ): Promise<RevenueAttribution> {
+    if (!affiliateId && !affiliateLinkId) {
+      return { affiliateId: null, affiliateLinkId: null };
+    }
+
+    if (affiliateLinkId) {
+      const link = await this.affiliateService.validateAffiliateLink(
+        affiliateLinkId,
+        affiliateId,
+        payerUserId
+      );
+      if (link) {
+        return {
+          affiliateId: link.affiliate_id,
+          affiliateLinkId: link.affiliate_link_id,
+        };
+      }
+
+      logger.warn('Affiliate link attribution rejected for revenue event', {
+        transactionId,
+        domain,
+        affiliateId,
+        affiliateLinkId,
+        payerUserId: payerUserId ?? null,
+      });
+    }
+
+    if (affiliateId) {
+      const isValid = await this.affiliateService.validateAffiliateId(affiliateId, payerUserId);
+      if (isValid) {
+        return { affiliateId, affiliateLinkId: null };
+      }
+
+      logger.warn('Affiliate attribution rejected for revenue event', {
+        transactionId,
+        domain,
+        affiliateId,
+        payerUserId: payerUserId ?? null,
+      });
+    }
+
+    return { affiliateId: null, affiliateLinkId: null };
   }
 
   /**

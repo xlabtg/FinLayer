@@ -53,6 +53,7 @@ interface DbInvoice {
   created_at: Date;
   updated_at: Date;
   affiliate_id?: string | null;
+  affiliate_link_id?: string | null;
   revenue_event_id?: string | null;
 }
 
@@ -129,10 +130,13 @@ export class PaymentsService {
       throw new PaymentProviderUnavailableError(provider.name);
     }
 
-    const affiliateId = await this.revenueService.validateAffiliateAttribution(
+    const attribution = await this.revenueService.validateRevenueAttribution(
       request.affiliate_id,
-      userId
+      userId,
+      request.affiliate_link_id
     );
+    const affiliateId = attribution.affiliateId;
+    const affiliateLinkId = attribution.affiliateLinkId;
 
     const txId = generateUUID();
     const invoiceId = generateUUID();
@@ -151,14 +155,14 @@ export class PaymentsService {
         id, type, domain, status, user_id,
         from_asset, to_asset, amount,
         fee_amount, fee_asset,
-        provider_id, idempotency_key, affiliate_id,
+        provider_id, idempotency_key, affiliate_id, affiliate_link_id,
         metadata, created_at, updated_at
       ) VALUES (
         ${txId}, 'payment', 'payments', 'pending',
         ${userId}, ${asset}, ${null}, ${request.amount},
         ${platformFee}, ${asset},
         ${providerRow.id}, ${request.idempotency_key},
-        ${affiliateId},
+        ${affiliateId}, ${affiliateLinkId},
         ${JSON.stringify({
           payment: {
             invoice_id: invoiceId,
@@ -603,9 +607,10 @@ export class PaymentsService {
         result_amount: string | null;
         from_asset: string;
         affiliate_id: string | null;
+        affiliate_link_id: string | null;
         user_id: string;
       }[]>`
-        SELECT revenue_event_id, amount, result_amount, from_asset, affiliate_id, user_id
+        SELECT revenue_event_id, amount, result_amount, from_asset, affiliate_id, affiliate_link_id, user_id
         FROM transactions WHERE id = ${params.transactionId}
       `;
       if (txRow && !txRow.revenue_event_id) {
@@ -617,6 +622,7 @@ export class PaymentsService {
           totalFee,
           feeAsset: txRow.from_asset,
           affiliateId: txRow.affiliate_id,
+          affiliateLinkId: txRow.affiliate_link_id,
           payerUserId: txRow.user_id,
         });
         await this.sql`

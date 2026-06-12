@@ -24,6 +24,47 @@ import { MoonPayAdapter } from '../../../../modules/providers/moonpay/adapter.js
 import { TransakAdapter } from '../../../../modules/providers/transak/adapter.js';
 import { NowPaymentsAdapter } from '../../../../modules/providers/nowpayments/adapter.js';
 
+function seedAffiliate(
+  mockSql: ReturnType<typeof createMockSql>,
+  affiliateId: string,
+  ownerUserId: string
+): void {
+  const affiliates = mockSql._tables.get('affiliates') ?? [];
+  mockSql._tables.set('affiliates', affiliates);
+  affiliates.push({
+    id: affiliateId,
+    user_id: ownerUserId,
+    code: `FL_${affiliateId.replace(/-/g, '').substring(0, 8).toUpperCase()}`,
+    commission_rate: '0.4',
+    payout_address: null,
+    total_earned: '0',
+    total_paid_out: '0',
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+}
+
+function seedAffiliateLink(
+  mockSql: ReturnType<typeof createMockSql>,
+  linkId: string,
+  affiliateId: string
+): Record<string, unknown> {
+  const links = mockSql._tables.get('affiliate_links') ?? [];
+  mockSql._tables.set('affiliate_links', links);
+  const row = {
+    id: linkId,
+    affiliate_id: affiliateId,
+    target_url: 'https://app.finlayer.io/pay',
+    short_code: `ln_${linkId.replace(/-/g, '').substring(0, 8)}`,
+    label: null,
+    clicks: 1,
+    conversions: 0,
+    created_at: new Date(),
+  };
+  links.push(row);
+  return row;
+}
+
 describe('Payments Flow', () => {
   let paymentsService: PaymentsService;
   let mockProvider: MockPaymentProvider;
@@ -322,6 +363,45 @@ describe('Payments Flow', () => {
       const revenueEvents = mockSql._tables.get('revenue_events') ?? [];
       expect(revenueEvents.length).toBe(1);
       expect(revenueEvents[0]!['source_domain']).toBe('payments');
+    });
+
+    test('increments attributed affiliate link conversion on paid webhook', async () => {
+      const affiliateId = generateUUID();
+      const affiliateLinkId = generateUUID();
+      seedAffiliate(mockSql, affiliateId, generateUUID());
+      const link = seedAffiliateLink(mockSql, affiliateLinkId, affiliateId);
+
+      const invoice = await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: generateUUID(),
+        affiliate_id: affiliateId,
+        affiliate_link_id: affiliateLinkId,
+      });
+
+      const txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs[0]!['affiliate_link_id']).toBe(affiliateLinkId);
+      expect(link['conversions']).toBe(0);
+
+      const providerInvoiceId = [...mockProvider.invoices.keys()][0]!;
+      const res = await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: JSON.stringify({
+          event_id: `evt-${generateUUID()}`,
+          invoice_id: providerInvoiceId,
+          status: 'paid',
+          paid_amount: '100',
+          tx_hash: '0xpaid',
+        }),
+        headers: {},
+      });
+
+      const revenueEvents = mockSql._tables.get('revenue_events') ?? [];
+
+      expect(res.processed).toBe(true);
+      expect(res.invoiceId).toBe(invoice.id);
+      expect(revenueEvents[0]!['affiliate_link_id']).toBe(affiliateLinkId);
+      expect(link['conversions']).toBe(1);
     });
 
     test('does not downgrade a terminal paid invoice from a stale webhook', async () => {

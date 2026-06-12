@@ -33,6 +33,27 @@ function seedAffiliate(
   });
 }
 
+function seedAffiliateLink(
+  mockSql: ReturnType<typeof createMockSql>,
+  linkId: string,
+  affiliateId: string
+): Record<string, unknown> {
+  const links = mockSql._tables.get('affiliate_links') ?? [];
+  mockSql._tables.set('affiliate_links', links);
+  const row = {
+    id: linkId,
+    affiliate_id: affiliateId,
+    target_url: 'https://app.finlayer.io/swap',
+    short_code: `ln_${linkId.replace(/-/g, '').substring(0, 8)}`,
+    label: null,
+    clicks: 1,
+    conversions: 0,
+    created_at: new Date(),
+  };
+  links.push(row);
+  return row;
+}
+
 describe('Swap Flow', () => {
   let swapService: SwapService;
   let mockProvider: MockSwapProvider;
@@ -228,6 +249,30 @@ describe('Swap Flow', () => {
       });
 
       expect(tx.affiliate_id).toBe(affiliateId);
+    });
+
+    test('increments attributed affiliate link conversions once', async () => {
+      const affiliateId = generateUUID();
+      const affiliateLinkId = generateUUID();
+      seedAffiliate(mockSql, affiliateId, generateUUID());
+      const link = seedAffiliateLink(mockSql, affiliateLinkId, affiliateId);
+
+      const tx = await swapService.executeSwap(userId, {
+        quote_id: quoteId,
+        recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+        idempotency_key: generateUUID(),
+        affiliate_id: affiliateId,
+        affiliate_link_id: affiliateLinkId,
+      });
+
+      const txRows = mockSql._tables.get('transactions') ?? [];
+      const txRow = txRows.find((row) => row['id'] === tx.id);
+      const events = mockSql._tables.get('revenue_events') ?? [];
+      const event = events.find((row) => row['transaction_id'] === tx.id);
+
+      expect(txRow!['affiliate_link_id']).toBe(affiliateLinkId);
+      expect(event!['affiliate_link_id']).toBe(affiliateLinkId);
+      expect(link['conversions']).toBe(1);
     });
 
     test('rejects self-referral before provider execution', async () => {

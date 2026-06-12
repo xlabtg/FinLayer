@@ -138,10 +138,13 @@ export class EarnService {
       strategy.lockPeriodDays > 0
         ? new Date(Date.now() + strategy.lockPeriodDays * 86_400_000).toISOString()
         : null;
-    const affiliateId = await this.revenueService.validateAffiliateAttribution(
+    const attribution = await this.revenueService.validateRevenueAttribution(
       request.affiliate_id,
-      userId
+      userId,
+      request.affiliate_link_id
     );
+    const affiliateId = attribution.affiliateId;
+    const affiliateLinkId = attribution.affiliateLinkId;
 
     // Reserve the idempotency key *before* the provider deposit (issue #15).
     // The atomic `ON CONFLICT DO NOTHING` guarantees a single deposit per key
@@ -150,14 +153,14 @@ export class EarnService {
       INSERT INTO transactions (
         id, type, domain, status, user_id,
         from_asset, to_asset, amount,
-        provider_id, idempotency_key, affiliate_id,
+        provider_id, idempotency_key, affiliate_id, affiliate_link_id,
         metadata, created_at, updated_at
       ) VALUES (
         ${txId}, 'earn_deposit', 'earn', 'pending',
         ${userId}, ${strategy.asset}, ${null},
         ${request.amount}, ${providerRow.id},
         ${request.idempotency_key},
-        ${affiliateId},
+        ${affiliateId}, ${affiliateLinkId},
         ${JSON.stringify({
           earn: {
             strategy_id: request.strategy_id,
@@ -239,6 +242,7 @@ export class EarnService {
       totalFee: platformFee,
       feeAsset: strategy.asset,
       affiliateId,
+      affiliateLinkId,
       payerUserId: userId,
     });
 
@@ -312,10 +316,13 @@ export class EarnService {
       throw new ValidationError('Position has no provider_position_id — still pending');
     }
 
-    const affiliateId = await this.revenueService.validateAffiliateAttribution(
+    const attribution = await this.revenueService.validateRevenueAttribution(
       request.affiliate_id,
-      userId
+      userId,
+      request.affiliate_link_id
     );
+    const affiliateId = attribution.affiliateId;
+    const affiliateLinkId = attribution.affiliateLinkId;
 
     const txId = generateUUID();
     const now = nowISO();
@@ -327,7 +334,7 @@ export class EarnService {
       INSERT INTO transactions (
         id, type, domain, status, user_id,
         from_asset, to_asset, amount,
-        provider_id, idempotency_key, affiliate_id,
+        provider_id, idempotency_key, affiliate_id, affiliate_link_id,
         metadata, created_at, updated_at
       ) VALUES (
         ${txId}, 'earn_withdraw', 'earn', 'pending',
@@ -335,7 +342,7 @@ export class EarnService {
         ${row.current_value},
         ${row.provider_id},
         ${request.idempotency_key},
-        ${affiliateId},
+        ${affiliateId}, ${affiliateLinkId},
         ${JSON.stringify({
           earn: {
             position_id: request.position_id,

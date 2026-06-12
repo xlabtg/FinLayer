@@ -21,6 +21,7 @@ const InvoiceCreateSchema = z.object({
   expires_in_seconds: z.number().int().min(60).max(7 * 24 * 60 * 60).optional(),
   callback_url: z.string().url().optional(),
   affiliate_id: z.string().uuid().optional(),
+  affiliate_link_id: z.string().uuid().optional(),
   idempotency_key: z.string().min(8).max(128),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -113,6 +114,7 @@ export async function paymentsRoutes(fastify: FastifyInstance): Promise<void> {
           expires_in_seconds: { type: 'integer', minimum: 60, maximum: 604800 },
           callback_url: { type: 'string', format: 'uri' },
           affiliate_id: { type: 'string', format: 'uuid' },
+          affiliate_link_id: { type: 'string', format: 'uuid' },
           idempotency_key: { type: 'string', minLength: 8, maxLength: 128 },
           metadata: { type: 'object', additionalProperties: true },
         },

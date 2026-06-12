@@ -88,7 +88,7 @@ export class MarketplaceService {
       product: params.kind,
       deep_link: deepLink,
       web_widget_url: deepLink,
-      sdk_snippet: buildSdkSnippet(params, affiliate.id),
+      sdk_snippet: buildSdkSnippet(params, affiliate.id, link.id),
     };
   }
 
@@ -167,12 +167,12 @@ function requireAmount(value: string): void {
   }
 }
 
-function buildSdkSnippet(params: MarketplaceLinkParams, affiliateId: UUID): string {
+function buildSdkSnippet(params: MarketplaceLinkParams, affiliateId: UUID, affiliateLinkId: UUID): string {
   switch (params.kind) {
     case 'swap':
       return [
         `import { HiveFinance } from '@finlayer/sdk';`,
-        `const fl = new HiveFinance({ apiKey: 'fl_live_...', affiliateId: '${affiliateId}' });`,
+        `const fl = new HiveFinance({ apiKey: 'fl_live_...', affiliateId: '${affiliateId}', affiliateLinkId: '${affiliateLinkId}' });`,
         `const tx = await fl.swap.quoteAndExecute({`,
         `  from_asset: '${params.from_asset.toUpperCase()}',`,
         `  to_asset: '${params.to_asset.toUpperCase()}',`,
@@ -184,7 +184,7 @@ function buildSdkSnippet(params: MarketplaceLinkParams, affiliateId: UUID): stri
     case 'payment':
       return [
         `import { HiveFinance } from '@finlayer/sdk';`,
-        `const fl = new HiveFinance({ apiKey: 'fl_live_...', affiliateId: '${affiliateId}' });`,
+        `const fl = new HiveFinance({ apiKey: 'fl_live_...', affiliateId: '${affiliateId}', affiliateLinkId: '${affiliateLinkId}' });`,
         `const invoice = await fl.payments.createInvoice({`,
         `  asset: '${params.asset.toUpperCase()}',`,
         `  amount: '${params.amount}',`,
@@ -194,7 +194,7 @@ function buildSdkSnippet(params: MarketplaceLinkParams, affiliateId: UUID): stri
     case 'earn':
       return [
         `import { HiveFinance } from '@finlayer/sdk';`,
-        `const fl = new HiveFinance({ apiKey: 'fl_live_...', affiliateId: '${affiliateId}' });`,
+        `const fl = new HiveFinance({ apiKey: 'fl_live_...', affiliateId: '${affiliateId}', affiliateLinkId: '${affiliateLinkId}' });`,
         `// Earn deposit (Phase 3+)`,
         `// const position = await fl.earn.deposit({ strategy_id: '${params.strategy_id}', amount: '${params.amount ?? '100'}', from_address: '0x...', idempotency_key: crypto.randomUUID() });`,
       ].join('\n');

@@ -30,6 +30,28 @@ function seedAffiliate(
   });
 }
 
+function seedAffiliateLink(
+  mockSql: ReturnType<typeof createMockSql>,
+  linkId: string,
+  affiliateId: string
+): Record<string, unknown> {
+  const links = mockSql._tables.get('affiliate_links') ?? [];
+  mockSql._tables.set('affiliate_links', links);
+
+  const row = {
+    id: linkId,
+    affiliate_id: affiliateId,
+    target_url: 'https://app.finlayer.io/swap',
+    short_code: `ln_${linkId.replace(/-/g, '').substring(0, 8)}`,
+    label: null,
+    clicks: 1,
+    conversions: 0,
+    created_at: new Date(),
+  };
+  links.push(row);
+  return row;
+}
+
 describe('Affiliate attribution validation (issue #33)', () => {
   test('accepts an existing affiliate owned by another user', async () => {
     const mockSql = createMockSql();
@@ -68,5 +90,34 @@ describe('Affiliate attribution validation (issue #33)', () => {
     await expect(
       revenueService.validateAffiliateAttribution(undefined, generateUUID())
     ).resolves.toBeNull();
+  });
+});
+
+describe('Affiliate link conversions (issue #74)', () => {
+  test('increments the attributed link conversion when a revenue event is created', async () => {
+    const mockSql = createMockSql();
+    const revenueService = new RevenueService(mockSql as never, DEFAULT_REVENUE_CONFIG);
+    const payerUserId = generateUUID();
+    const affiliateId = generateUUID();
+    const affiliateLinkId = generateUUID();
+
+    seedAffiliate(mockSql, affiliateId, generateUUID());
+    const link = seedAffiliateLink(mockSql, affiliateLinkId, affiliateId);
+
+    const eventId = await revenueService.createRevenueEvent({
+      transactionId: generateUUID(),
+      domain: 'swap',
+      totalFee: '10',
+      feeAsset: 'USDC',
+      affiliateId,
+      affiliateLinkId,
+      payerUserId,
+    } as Parameters<RevenueService['createRevenueEvent']>[0] & { affiliateLinkId: string });
+
+    const events = mockSql._tables.get('revenue_events') ?? [];
+    const event = events.find((row) => row['id'] === eventId);
+
+    expect(event!['affiliate_link_id']).toBe(affiliateLinkId);
+    expect(link['conversions']).toBe(1);
   });
 });
