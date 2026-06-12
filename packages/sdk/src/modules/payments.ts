@@ -36,7 +36,7 @@ export class PaymentsModule {
   }
 
   /**
-   * Fetch an invoice. Refreshes from the provider if still pending.
+   * Fetch an invoice. Refreshes from the provider if not terminal.
    *
    * @example
    * const { invoice } = await finlayer.payments.getInvoice(invoiceId);
@@ -54,8 +54,7 @@ export class PaymentsModule {
   }
 
   /**
-   * Poll invoice status until terminal (paid / expired / overpaid / underpaid)
-   * or timeout.
+   * Poll invoice status until terminal (paid / overpaid / expired) or timeout.
    *
    * @example
    * const final = await finlayer.payments.waitForPayment(invoiceId, {
@@ -69,7 +68,7 @@ export class PaymentsModule {
   ): Promise<Invoice> {
     const { timeoutMs = 60 * 60 * 1000, pollIntervalMs = 15_000 } = options;
     const start = Date.now();
-    const terminal = new Set(['paid', 'expired', 'overpaid', 'underpaid']);
+    const terminal = new Set(['paid', 'expired', 'overpaid']);
 
     while (Date.now() - start < timeoutMs) {
       const { invoice } = await this.getInvoice(invoiceId);

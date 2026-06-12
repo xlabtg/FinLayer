@@ -276,7 +276,8 @@ export class PaymentsService {
 
   /**
    * Fetch invoice by ID, scoped to the owning user.
-   * Optionally refreshes status from the provider for terminal-status sync.
+   * Optionally refreshes status from the provider while the invoice can still
+   * transition to another state.
    */
   async getInvoice(invoiceId: UUID, userId: UUID): Promise<Invoice> {
     const [row] = await this.sql<DbInvoice[]>`
@@ -291,7 +292,7 @@ export class PaymentsService {
     }
 
     // If not terminal, try to refresh from provider (best-effort).
-    if (row.status === 'pending' && row.provider_name) {
+    if (!TERMINAL_INVOICE_STATUSES.has(row.status) && row.provider_name) {
       const provider = this.providers.get(row.provider_name);
       if (provider) {
         try {
