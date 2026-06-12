@@ -216,6 +216,13 @@ export class ChangeNOWAdapter implements ISwapProviderAdapter {
 
     const response = await this.request<ChangeNOWExchangeResponse>('/exchange', 'POST', body);
     if (
+      response.fromCurrency.toLowerCase() !== fromCurrency ||
+      response.toCurrency.toLowerCase() !== toCurrency
+    ) {
+      throw new ProviderError(this.name, 'fixed-rate execution currency pair does not match saved quote');
+    }
+
+    if (
       compareNumericStrings(String(response.fromAmount), params.fromAmount) !== 0 ||
       compareNumericStrings(String(response.toAmount), params.toAmount) !== 0
     ) {

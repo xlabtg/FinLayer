@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { ChangeNOWAdapter } from '../../../../modules/providers/changenow/adapter.js';
 
-describe('ChangeNOWAdapter fixed-rate execution (issue #23)', () => {
+describe('ChangeNOWAdapter fixed-rate execution (issues #23, #27)', () => {
   const originalFetch = globalThis.fetch;
 
   afterEach(() => {
@@ -117,5 +117,108 @@ describe('ChangeNOWAdapter fixed-rate execution (issue #23)', () => {
     expect(exchangeBody['toAmount']).toBeUndefined();
     expect(executeResult.providerTxId).toBe('cn_tx_123');
     expect(executeResult.depositAddress).toBe('bc1deposit');
+  });
+
+  test('uses saved quote currencies instead of parsing an opaque providerQuoteId', async () => {
+    const requests: { url: string; method: string; body: Record<string, unknown> | undefined }[] = [];
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as Record<string, unknown>
+        : undefined;
+      requests.push({ url, method: init?.method ?? 'GET', body });
+
+      if (url.endsWith('/exchange') && init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          id: 'cn_tx_opaque',
+          type: 'direct',
+          status: 'waiting',
+          validUntil: null,
+          payinAddress: 'usdc-deposit',
+          payoutAddress: body?.['address'],
+          fromAmount: '25',
+          toAmount: '0.05',
+          fromCurrency: 'usdc',
+          toCurrency: 'bnb',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unexpected URL: ${url}` }), { status: 500 });
+    }) as typeof fetch;
+
+    const adapter = new ChangeNOWAdapter('api-key', '', 'https://example.test');
+
+    await adapter.executeSwap({
+      providerQuoteId: 'opaque-rate-id',
+      fromAsset: 'USDC',
+      toAsset: 'BNB',
+      fromAmount: '25',
+      toAmount: '0.05',
+      rate: '0.002',
+      recipientAddress: 'bnb-recipient',
+    });
+
+    const exchangeBody = requests.find((request) => request.url.endsWith('/exchange'))!.body!;
+    expect(exchangeBody).toEqual({
+      fromCurrency: 'usdc',
+      toCurrency: 'bnb',
+      fromAmount: '25',
+      address: 'bnb-recipient',
+      flow: 'fixed-rate',
+      type: 'direct',
+      rateId: 'opaque-rate-id',
+    });
+    expect(exchangeBody['fromCurrency']).not.toBe('btc');
+    expect(exchangeBody['toCurrency']).not.toBe('eth');
+  });
+
+  test('rejects a ChangeNOW exchange response for a different currency pair', async () => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.endsWith('/exchange') && init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          id: 'cn_tx_wrong_pair',
+          type: 'direct',
+          status: 'waiting',
+          validUntil: null,
+          payinAddress: 'wrong-deposit',
+          payoutAddress: 'wrong-recipient',
+          fromAmount: '25',
+          toAmount: '0.05',
+          fromCurrency: 'btc',
+          toCurrency: 'eth',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unexpected URL: ${url}` }), { status: 500 });
+    }) as typeof fetch;
+
+    const adapter = new ChangeNOWAdapter('api-key', '', 'https://example.test');
+
+    await expect(adapter.executeSwap({
+      providerQuoteId: 'opaque-rate-id',
+      fromAsset: 'USDC',
+      toAsset: 'BNB',
+      fromAmount: '25',
+      toAmount: '0.05',
+      rate: '0.002',
+      recipientAddress: 'bnb-recipient',
+    })).rejects.toThrow('fixed-rate execution currency pair does not match saved quote');
   });
 });
