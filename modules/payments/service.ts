@@ -14,6 +14,7 @@ import type {
   TransactionStatus,
 } from '@finlayer/types';
 import type {
+  InvoiceCreateParams,
   IPaymentProviderAdapter,
   WebhookVerifyResult,
 } from '../shared/types/index.js';
@@ -139,6 +140,7 @@ export class PaymentsService {
     const network = request.network ?? '';
     const asset = request.asset.toUpperCase();
     const platformFee = this.revenueService.calculatePlatformFee(request.amount);
+    const webhookUrl = this.providerWebhookUrl(provider.name);
 
     // Reserve the idempotency key *before* calling the provider (issue #15).
     // The atomic `ON CONFLICT DO NOTHING` ensures two concurrent requests with
@@ -181,14 +183,18 @@ export class PaymentsService {
     // Call provider only after the key is reserved.
     let providerResult;
     try {
-      providerResult = await provider.createInvoice({
-        asset: request.asset.toUpperCase(),
+      const providerParams = {
+        asset,
         amount: request.amount,
-        network: request.network,
-        description: request.description,
-        expiresInSeconds: request.expires_in_seconds,
-        callbackUrl: request.callback_url,
-      });
+        webhookUrl,
+        ...(request.network !== undefined ? { network: request.network } : {}),
+        ...(request.description !== undefined ? { description: request.description } : {}),
+        ...(request.expires_in_seconds !== undefined
+          ? { expiresInSeconds: request.expires_in_seconds }
+          : {}),
+      } satisfies InvoiceCreateParams;
+
+      providerResult = await provider.createInvoice(providerParams);
     } catch (err) {
       // Release the reservation so a genuine failure can be retried.
       await this.sql`DELETE FROM transactions WHERE id = ${txId}`;
@@ -639,7 +645,7 @@ export class PaymentsService {
     const created = row.created_at instanceof Date ? row.created_at : new Date(row.created_at);
     const updated = row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
     const paid = row.paid_at instanceof Date ? row.paid_at : row.paid_at ? new Date(row.paid_at) : null;
-    const webhookUrl = `${this.baseUrl}/v1/payments/webhook/${row.provider_name ?? 'unknown'}`;
+    const webhookUrl = this.providerWebhookUrl(row.provider_name ?? 'unknown');
 
     return {
       id: row.id,
@@ -663,6 +669,10 @@ export class PaymentsService {
       created_at: created.toISOString(),
       updated_at: updated.toISOString(),
     };
+  }
+
+  private providerWebhookUrl(providerName: string): string {
+    return `${this.baseUrl}/v1/payments/webhook/${providerName}`;
   }
 }
 

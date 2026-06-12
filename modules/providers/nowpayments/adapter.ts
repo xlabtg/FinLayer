@@ -86,14 +86,14 @@ export class NowPaymentsAdapter implements IPaymentProviderAdapter {
   }
 
   async createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult> {
-    const { asset, amount, network, description, callbackUrl, expiresInSeconds } = params;
+    const { asset, amount, network, description, webhookUrl, expiresInSeconds } = params;
 
     const body: Record<string, unknown> = {
       price_amount: amount,
       price_currency: 'usd',
       pay_currency: asset.toLowerCase(),
       order_description: description,
-      ipn_callback_url: callbackUrl,
+      ipn_callback_url: webhookUrl,
     };
     if (network) body['pay_network'] = network;
 

@@ -702,7 +702,7 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       if (query.startsWith('INSERT INTO INVOICES')) {
         // `status` is a SQL literal in the service — not a bound value.
         // [id, txId, userId, providerId, providerInvoiceId, asset, amount, network,
-        //  paymentAddress, description, callbackUrl, expiresAt, metadata, now, now]
+        //  paymentAddress, description, callback_url, expiresAt, metadata, now, now]
         const row: MockRow = {
           id: values[0],
           transaction_id: values[1],

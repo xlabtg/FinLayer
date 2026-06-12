@@ -73,7 +73,7 @@ export class MoonPayAdapter implements IPaymentProviderAdapter {
   }
 
   async createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult> {
-    const { asset, amount, network, callbackUrl } = params;
+    const { asset, amount, network, webhookUrl } = params;
 
     // MoonPay uses widget-based flow: we build a signed widget URL that the
     // buyer opens. The webhook delivery confirms payment.
@@ -83,7 +83,7 @@ export class MoonPayAdapter implements IPaymentProviderAdapter {
       baseCurrencyAmount: String(amount),
     });
     if (network) query.set('network', network);
-    if (callbackUrl) query.set('redirectURL', callbackUrl);
+    query.set('redirectURL', webhookUrl);
 
     const widgetUrl = `${MOONPAY_WIDGET_URL}?${query.toString()}`;
     const providerInvoiceId = `mp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;

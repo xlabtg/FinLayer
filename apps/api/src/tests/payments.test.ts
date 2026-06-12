@@ -73,6 +73,23 @@ describe('Payments Flow', () => {
       expect(txs[0]!['domain']).toBe('payments');
     });
 
+    test('passes the internal webhook URL to provider while preserving user callback_url', async () => {
+      const userCallbackUrl = 'https://client.example/payments/return';
+
+      const invoice = await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        callback_url: userCallbackUrl,
+        idempotency_key: `inv-${generateUUID()}`,
+      });
+
+      expect(mockProvider.lastCreateInvoiceParams?.webhookUrl).toBe(
+        'http://test.local/v1/payments/webhook/MockPayments'
+      );
+      expect(invoice.webhook_url).toBe('http://test.local/v1/payments/webhook/MockPayments');
+      expect(invoice.callback_url).toBe(userCallbackUrl);
+    });
+
     test('throws IdempotencyError when idempotency_key is missing', async () => {
       await expect(
         paymentsService.createInvoice(userId, {

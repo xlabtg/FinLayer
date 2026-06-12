@@ -82,7 +82,7 @@ export class TransakAdapter implements IPaymentProviderAdapter {
   }
 
   async createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult> {
-    const { asset, amount, network, callbackUrl } = params;
+    const { asset, amount, network, webhookUrl } = params;
     const query = new URLSearchParams({
       apiKey: this.apiKey,
       cryptoCurrencyCode: asset.toUpperCase(),
@@ -90,7 +90,7 @@ export class TransakAdapter implements IPaymentProviderAdapter {
       fiatCurrency: 'USD',
     });
     if (network) query.set('network', network);
-    if (callbackUrl) query.set('redirectURL', callbackUrl);
+    query.set('redirectURL', webhookUrl);
 
     const widgetUrl = `${TRANSAK_WIDGET_URL}?${query.toString()}`;
     const providerInvoiceId = `tk_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;

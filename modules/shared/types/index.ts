@@ -171,7 +171,8 @@ export interface InvoiceCreateParams {
   network?: string;
   description?: string;
   expiresInSeconds?: number;
-  callbackUrl?: string;
+  /** Canonical FinLayer endpoint for provider status notifications. */
+  webhookUrl: string;
 }
 
 export interface InvoiceResult {
