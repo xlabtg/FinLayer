@@ -1,24 +1,14 @@
 /**
- * PostgreSQL database client.
- * Uses the 'postgres' library (sql tagged template literals).
+ * CLI PostgreSQL client for migration commands.
+ *
+ * The API server creates and closes its runtime pool in plugins/database.ts.
+ * Both entry points share pool settings through db/connection.ts.
  */
 
-import postgres from 'postgres';
-import { logger } from '../../../modules/shared/utils/logger.js';
+import { createDatabaseClient } from './connection.js';
+import { logger } from '../../../../modules/shared/utils/logger.js';
 
-const DATABASE_URL = process.env['DATABASE_URL'];
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is required');
-}
-
-export const sql = postgres(DATABASE_URL, {
-  max: 20,
-  idle_timeout: 30,
-  connect_timeout: 10,
-  transform: {
-    // Automatically parse JSONB columns
-    column: { to: postgres.camel },
-  },
+export const sql = createDatabaseClient({
   onnotice: (notice) => {
     logger.debug('PostgreSQL notice', { notice: notice.message });
   },
@@ -29,4 +19,4 @@ export async function checkDbConnection(): Promise<void> {
   logger.info('Database connection established');
 }
 
-export { postgres };
+export { postgres } from './connection.js';

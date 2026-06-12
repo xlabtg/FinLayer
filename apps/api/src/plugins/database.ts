@@ -4,25 +4,19 @@
 
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
-import postgres from 'postgres';
+import {
+  createDatabaseClient,
+  type DatabaseClient,
+} from '../db/connection.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
-    sql: ReturnType<typeof postgres>;
+    sql: DatabaseClient;
   }
 }
 
 export default fp(async function databasePlugin(fastify: FastifyInstance) {
-  const DATABASE_URL = process.env['DATABASE_URL'];
-  if (!DATABASE_URL) {
-    throw new Error('DATABASE_URL environment variable is required');
-  }
-
-  const sql = postgres(DATABASE_URL, {
-    max: 20,
-    idle_timeout: 30,
-    connect_timeout: 10,
-  });
+  const sql = createDatabaseClient();
 
   fastify.decorate('sql', sql);
 
