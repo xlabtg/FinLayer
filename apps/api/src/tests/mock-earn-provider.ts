@@ -71,6 +71,10 @@ export class MockEarnProvider implements IEarnProviderAdapter {
   public forceDepositError = false;
   public forceWithdrawError = false;
 
+  /** Provider-side transaction statuses returned by deposit/withdraw. */
+  public depositStatus: EarnDepositResult['status'] = 'processing';
+  public withdrawStatus: EarnWithdrawResult['status'] = 'processing';
+
   async isHealthy(): Promise<boolean> {
     return true;
   }
@@ -109,7 +113,7 @@ export class MockEarnProvider implements IEarnProviderAdapter {
     return {
       providerPositionId,
       depositAddress: `mock_deposit_${providerPositionId}`,
-      status: 'processing',
+      status: this.depositStatus,
     };
   }
 
@@ -125,10 +129,12 @@ export class MockEarnProvider implements IEarnProviderAdapter {
     if (!pos) {
       throw new Error(`Position ${params.providerPositionId} not found`);
     }
-    pos.status = 'withdrawn';
+    if (this.withdrawStatus === 'completed') {
+      pos.status = 'withdrawn';
+    }
     return {
       txHash: `0xmock_withdraw_${Date.now()}`,
-      status: 'processing',
+      status: this.withdrawStatus,
       withdrawnAmount: pos.currentValue,
     };
   }
@@ -145,8 +151,15 @@ export class MockEarnProvider implements IEarnProviderAdapter {
   simulateYield(providerPositionId: string, additional: string): void {
     const pos = this.positions.get(providerPositionId);
     if (!pos) return;
+    pos.status = 'active';
     const newValue = (parseFloat(pos.currentValue) + parseFloat(additional)).toFixed(8);
     pos.currentValue = newValue;
     pos.earnedYield = (parseFloat(newValue) - parseFloat(pos.depositedAmount)).toFixed(8);
+  }
+
+  setPositionStatus(providerPositionId: string, status: EarnPositionResult['status']): void {
+    const pos = this.positions.get(providerPositionId);
+    if (!pos) return;
+    pos.status = status;
   }
 }

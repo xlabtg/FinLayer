@@ -137,6 +137,27 @@ describe('Earn Service — Deposit', () => {
     expect(pos!['provider_position_id']).toBeTruthy();
   });
 
+  test('completed provider deposit creates an active earn position (issue #70)', async () => {
+    mockProvider.depositStatus = 'completed';
+
+    const result = await service.deposit(userId, {
+      strategy_id: usdcStrategyId,
+      amount: '100',
+      from_address: '0xAliceAddress',
+      idempotency_key: generateUUID(),
+    });
+
+    expect(result.position.status).toBe('active');
+
+    const positions = mockSql._tables.get('earn_positions') ?? [];
+    const pos = positions.find((p) => p['id'] === result.position.id);
+    expect(pos!['status']).toBe('active');
+
+    const txs = mockSql._tables.get('transactions') ?? [];
+    const tx = txs.find((t) => t['id'] === result.transaction_id);
+    expect(tx!['status']).toBe('completed');
+  });
+
   test('deposit creates a revenue event with earn domain', async () => {
     const result = await service.deposit(userId, {
       strategy_id: usdcStrategyId,
@@ -356,6 +377,24 @@ describe('Earn Service — Positions & Withdraw', () => {
     expect(parseFloat(position.earned_yield)).toBeCloseTo(5, 5);
   });
 
+  test('getPosition refreshes a pending position to active when provider confirms it (issue #70)', async () => {
+    const dep = await service.deposit(userId, {
+      strategy_id: usdcStrategyId,
+      amount: '100',
+      from_address: '0xAliceAddress',
+      idempotency_key: generateUUID(),
+    });
+    const positions = mockSql._tables.get('earn_positions') ?? [];
+    const posRow = positions.find((p) => p['id'] === dep.position.id)!;
+
+    expect(posRow['status']).toBe('pending');
+    mockProvider.setPositionStatus(posRow['provider_position_id'] as string, 'active');
+
+    const position = await service.getPosition(userId, dep.position.id);
+    expect(position.status).toBe('active');
+    expect(posRow['status']).toBe('active');
+  });
+
   test('getPosition throws EarnPositionNotFoundError for unknown id', async () => {
     await expect(service.getPosition(userId, generateUUID())).rejects.toBeInstanceOf(
       EarnPositionNotFoundError
@@ -363,6 +402,8 @@ describe('Earn Service — Positions & Withdraw', () => {
   });
 
   test('withdraw marks position withdrawn and records transaction', async () => {
+    mockProvider.withdrawStatus = 'completed';
+
     const dep = await service.deposit(userId, {
       strategy_id: usdcStrategyId,
       amount: '100',
@@ -386,6 +427,56 @@ describe('Earn Service — Positions & Withdraw', () => {
     const txs = mockSql._tables.get('transactions') ?? [];
     const wTx = txs.find((t) => t['id'] === res.transaction_id);
     expect(wTx!['type']).toBe('earn_withdraw');
+    expect(wTx!['status']).toBe('completed');
+  });
+
+  test('withdraw rejects pending position even when provider_position_id exists (issue #70)', async () => {
+    const dep = await service.deposit(userId, {
+      strategy_id: usdcStrategyId,
+      amount: '100',
+      from_address: '0xAliceAddress',
+      idempotency_key: generateUUID(),
+    });
+    const positions = mockSql._tables.get('earn_positions') ?? [];
+    const posRow = positions.find((p) => p['id'] === dep.position.id)!;
+
+    expect(posRow['status']).toBe('pending');
+    expect(posRow['provider_position_id']).toBeTruthy();
+
+    await expect(
+      service.withdraw(userId, {
+        position_id: dep.position.id,
+        to_address: '0xReceiver',
+        idempotency_key: generateUUID(),
+      })
+    ).rejects.toMatchObject({ code: 'EARN_POSITION_NOT_ACTIVE' });
+
+    expect(mockProvider.withdrawCalls).toBe(0);
+  });
+
+  test('withdraw keeps position active while provider withdrawal is processing (issue #70)', async () => {
+    const dep = await service.deposit(userId, {
+      strategy_id: usdcStrategyId,
+      amount: '100',
+      from_address: '0xAliceAddress',
+      idempotency_key: generateUUID(),
+    });
+    const positions = mockSql._tables.get('earn_positions') ?? [];
+    const posRow = positions.find((p) => p['id'] === dep.position.id)!;
+    posRow['status'] = 'active';
+
+    const res = await service.withdraw(userId, {
+      position_id: dep.position.id,
+      to_address: '0xReceiver',
+      idempotency_key: generateUUID(),
+    });
+
+    expect(res.position.status).toBe('active');
+    expect(posRow['status']).toBe('active');
+
+    const txs = mockSql._tables.get('transactions') ?? [];
+    const wTx = txs.find((t) => t['id'] === res.transaction_id);
+    expect(wTx!['status']).toBe('processing');
   });
 
   test('withdraw on locked position throws EarnPositionLockedError', async () => {
