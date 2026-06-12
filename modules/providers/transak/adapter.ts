@@ -28,7 +28,9 @@ const TRANSAK_WIDGET_URL = 'https://global.transak.com';
 const INVOICE_TTL_SECONDS = 24 * 60 * 60;
 
 interface TransakOrder {
-  id: string;
+  id?: string;
+  _id?: string;
+  partnerOrderId?: string | null;
   status:
     | 'AWAITING_PAYMENT_FROM_USER'
     | 'PAYMENT_DONE_MARKED_BY_USER'
@@ -46,6 +48,7 @@ interface TransakOrder {
   walletAddress: string | null;
   createdAt: string;
   updatedAt: string;
+  completedAt?: string | null;
 }
 
 const STATUS_MAP: Record<TransakOrder['status'], InvoiceStatusResult['status']> = {
@@ -69,7 +72,8 @@ export class TransakAdapter implements IPaymentProviderAdapter {
   constructor(
     private readonly apiKey: string,
     private readonly webhookSecret: string = '',
-    private readonly apiUrl: string = TRANSAK_API_URL
+    private readonly apiUrl: string = TRANSAK_API_URL,
+    private readonly apiSecret: string = ''
   ) {}
 
   async isHealthy(): Promise<boolean> {
@@ -82,18 +86,19 @@ export class TransakAdapter implements IPaymentProviderAdapter {
   }
 
   async createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult> {
-    const { asset, amount, network, webhookUrl } = params;
+    const { asset, amount, network, webhookUrl, correlationId } = params;
     const query = new URLSearchParams({
       apiKey: this.apiKey,
       cryptoCurrencyCode: asset.toUpperCase(),
       fiatAmount: String(amount),
       fiatCurrency: 'USD',
+      partnerOrderId: correlationId,
     });
     if (network) query.set('network', network);
     query.set('redirectURL', webhookUrl);
 
     const widgetUrl = `${TRANSAK_WIDGET_URL}?${query.toString()}`;
-    const providerInvoiceId = `tk_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const providerInvoiceId = correlationId;
 
     logger.debug('Transak invoice created', { providerInvoiceId, asset, amount });
 
@@ -105,17 +110,29 @@ export class TransakAdapter implements IPaymentProviderAdapter {
   }
 
   async getInvoiceStatus(providerInvoiceId: string): Promise<InvoiceStatusResult> {
-    const res = await this.request<{ response: TransakOrder }>(
-      `/api/v2/orders/${providerInvoiceId}`
+    const query = new URLSearchParams({
+      limit: '1',
+      'filter[partnerOrderId]': providerInvoiceId,
+      'filter[productsAvailed]': JSON.stringify(['BUY']),
+    });
+    const res = await this.requestWithAccessToken<{ data: TransakOrder[] }>(
+      `/partners/api/v2/orders?${query.toString()}`
     );
-    const order = res.response;
+    const order = res.data[0];
+
+    if (!order) {
+      return {
+        providerInvoiceId,
+        status: 'pending',
+      };
+    }
 
     return {
-      providerInvoiceId: order.id,
+      providerInvoiceId: order.partnerOrderId ?? providerInvoiceId,
       status: STATUS_MAP[order.status] ?? 'pending',
       paidAmount: order.cryptoAmount != null ? String(order.cryptoAmount) : undefined,
       txHash: order.transactionHash ?? undefined,
-      paidAt: order.status === 'COMPLETED' ? order.updatedAt : undefined,
+      paidAt: order.status === 'COMPLETED' ? order.completedAt ?? order.updatedAt : undefined,
     };
   }
 
@@ -139,13 +156,14 @@ export class TransakAdapter implements IPaymentProviderAdapter {
     }
 
     const order = payload.webhookData ?? (payload.status as TransakOrder | undefined);
-    const providerInvoiceId = order?.id ?? '';
+    const providerInvoiceId = order?.partnerOrderId ?? order?.id ?? order?._id ?? '';
     if (!providerInvoiceId) return null;
+    const providerOrderId = order?.id ?? order?._id ?? providerInvoiceId;
 
     const status = order?.status as TransakOrder['status'] | undefined;
 
     return {
-      providerEventId: payload.eventID ?? `${providerInvoiceId}:${status ?? 'unknown'}`,
+      providerEventId: payload.eventID ?? `${providerOrderId}:${status ?? 'unknown'}`,
       providerInvoiceId,
       eventType: payload.eventName ?? 'order_updated',
       status: status ? STATUS_MAP[status] ?? 'pending' : 'pending',
@@ -154,17 +172,18 @@ export class TransakAdapter implements IPaymentProviderAdapter {
           ? String(order.cryptoAmount)
           : undefined,
       txHash: order?.transactionHash ?? undefined,
-      paidAt: status === 'COMPLETED' ? order?.updatedAt : undefined,
+      paidAt: status === 'COMPLETED' ? order?.completedAt ?? order?.updatedAt : undefined,
       signatureValid,
     };
   }
 
-  private async request<T>(path: string): Promise<T> {
+  private async requestWithAccessToken<T>(path: string): Promise<T> {
+    const accessToken = await this.getAccessToken();
     const res = await fetch(`${this.apiUrl}${path}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'api-secret': this.apiKey,
+        'access-token': accessToken,
       },
     });
     if (res.status === 429) {
@@ -175,6 +194,47 @@ export class TransakAdapter implements IPaymentProviderAdapter {
       throw new ProviderError(this.name, text || `HTTP ${res.status}`, 'payments');
     }
     return res.json() as Promise<T>;
+  }
+
+  private accessToken: string | null = null;
+  private accessTokenExpiresAtMs = 0;
+
+  private async getAccessToken(): Promise<string> {
+    if (this.accessToken && this.accessTokenExpiresAtMs - Date.now() > 60_000) {
+      return this.accessToken;
+    }
+
+    if (!this.apiSecret) {
+      throw new ProviderError(this.name, 'Missing Transak API secret', 'payments');
+    }
+
+    const res = await fetch(`${this.apiUrl}/partners/api/v2/refresh-token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-secret': this.apiSecret,
+      },
+      body: JSON.stringify({ apiKey: this.apiKey }),
+    });
+    if (res.status === 429) {
+      throw new ProviderRateLimitError(this.name);
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ProviderError(this.name, text || `HTTP ${res.status}`, 'payments');
+    }
+
+    const body = (await res.json()) as {
+      data?: { accessToken?: string; expiresAt?: number };
+    };
+    const token = body.data?.accessToken;
+    if (!token) {
+      throw new ProviderError(this.name, 'Missing Transak access token', 'payments');
+    }
+
+    this.accessToken = token;
+    this.accessTokenExpiresAtMs = (body.data?.expiresAt ?? 0) * 1000;
+    return token;
   }
 }
 

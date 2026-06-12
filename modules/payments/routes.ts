@@ -37,7 +37,15 @@ export async function paymentsRoutes(fastify: FastifyInstance): Promise<void> {
 
   const transakKey = process.env['TRANSAK_API_KEY'];
   if (transakKey) {
-    providers.set('Transak', new TransakAdapter(transakKey, process.env['TRANSAK_WEBHOOK_SECRET'] ?? ''));
+    providers.set(
+      'Transak',
+      new TransakAdapter(
+        transakKey,
+        process.env['TRANSAK_WEBHOOK_SECRET'] ?? '',
+        process.env['TRANSAK_API_URL'] ?? undefined,
+        process.env['TRANSAK_API_SECRET'] ?? ''
+      )
+    );
     logger.info('Transak provider initialized');
   }
 
