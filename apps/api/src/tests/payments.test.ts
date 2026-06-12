@@ -230,6 +230,50 @@ describe('Payments Flow', () => {
         paymentsService.getInvoice(generateUUID(), userId)
       ).rejects.toBeInstanceOf(InvoiceNotFoundError);
     });
+
+    test('refreshes an underpaid invoice to paid through provider polling', async () => {
+      const invoice = await paymentsService.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: generateUUID(),
+      });
+
+      const providerInvoiceId = [...mockProvider.invoices.keys()][0]!;
+
+      const underpaid = await paymentsService.handleWebhook({
+        providerName: mockProvider.name,
+        rawBody: JSON.stringify({
+          event_id: `evt-underpaid-${generateUUID()}`,
+          invoice_id: providerInvoiceId,
+          status: 'underpaid',
+          paid_amount: '40',
+          tx_hash: '0xpartial',
+        }),
+        headers: {},
+      });
+      expect(underpaid.status).toBe('underpaid');
+
+      let txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs[0]!['status']).toBe('processing');
+      expect(mockSql._tables.get('revenue_events') ?? []).toHaveLength(0);
+
+      mockProvider.setInvoiceStatus(providerInvoiceId, {
+        status: 'paid',
+        paidAmount: '100',
+        txHash: '0xpaid',
+        paidAt: '2026-06-12T12:00:00.000Z',
+      });
+
+      const refreshed = await paymentsService.getInvoice(invoice.id, userId);
+      expect(refreshed.status).toBe('paid');
+      expect(refreshed.paid_amount).toBe('100');
+      expect(refreshed.tx_hash).toBe('0xpaid');
+
+      txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs[0]!['status']).toBe('completed');
+      expect(txs[0]!['result_amount']).toBe('100');
+      expect(mockSql._tables.get('revenue_events') ?? []).toHaveLength(1);
+    });
   });
 
   describe('POST /v1/payments/webhook/:provider', () => {

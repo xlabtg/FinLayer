@@ -184,7 +184,10 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('SELECT') && query.includes('FROM PROVIDERS')) {
-        const rows = initTable('providers').filter(r => r['is_active'] === true);
+        const rows = initTable('providers').filter(r =>
+          r['is_active'] === true &&
+          (!query.includes('NAME =') || r['name'] === values[0])
+        );
         return Promise.resolve(rows);
       }
 
