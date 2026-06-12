@@ -9,7 +9,7 @@
  */
 
 import bcrypt from 'bcryptjs';
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import { generateUUID, generateApiKey, parseApiKey, nowISO, futureISO } from '@finlayer/utils';
 import type {
   ApiKey,
@@ -53,7 +53,7 @@ export class AuthService {
   private readonly rateLimitWindowMs: number;
 
   constructor(
-    private readonly sql: SQL,
+    private readonly sql: Sql,
     options: AuthServiceOptions = {}
   ) {
     this.rateLimitCache = options.rateLimitCache ?? new InMemoryCache();

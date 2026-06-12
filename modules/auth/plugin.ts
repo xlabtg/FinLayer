@@ -51,7 +51,7 @@ export default fp(async function authPlugin(fastify: FastifyInstance) {
         (request.query as Record<string, unknown>)['affiliate_id'] ??
         request.headers['x-affiliate-id'];
       if (affiliateId && typeof affiliateId === 'string') {
-        (request as Record<string, unknown>)['affiliateId'] = affiliateId;
+        (request as unknown as Record<string, unknown>)['affiliateId'] = affiliateId;
       }
     } catch (err) {
       if (err instanceof FinLayerError) {

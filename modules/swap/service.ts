@@ -3,7 +3,7 @@
  * Swap orchestration: route quotes, execute swaps, track revenue.
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import {
   generateUUID,
   nowISO,
@@ -142,7 +142,7 @@ export class SwapService {
   private readonly routingWeights: RoutingWeights;
 
   constructor(
-    private readonly sql: SQL,
+    private readonly sql: Sql,
     private readonly providers: Map<string, ISwapProviderAdapter>,
     options: SwapServiceOptions = {}
   ) {

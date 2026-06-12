@@ -22,8 +22,8 @@ export class FinLayerApiError extends Error {
   public readonly code: string;
   public readonly domain: string;
   public readonly retryable: boolean;
-  public readonly retry_after_ms?: number;
-  public readonly suggestion?: string;
+  public readonly retry_after_ms: number | undefined;
+  public readonly suggestion: string | undefined;
 
   constructor(error: ApiErrorResponse['error']) {
     super(error.message);
@@ -40,8 +40,8 @@ export class FinLayerClient {
   public readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly timeout: number;
-  private readonly affiliateId?: string;
-  private readonly affiliateLinkId?: string;
+  private readonly affiliateId: string | undefined;
+  private readonly affiliateLinkId: string | undefined;
 
   constructor(config: FinLayerClientConfig) {
     this.apiKey = config.apiKey;
@@ -72,12 +72,16 @@ export class FinLayerClient {
     }
 
     try {
-      const res = await fetch(url, {
+      const init: RequestInit = {
         method,
         headers,
-        body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
-      });
+      };
+      if (body !== undefined) {
+        init.body = JSON.stringify(body);
+      }
+
+      const res = await fetch(url, init);
 
       clearTimeout(timeoutId);
 

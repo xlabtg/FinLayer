@@ -24,9 +24,9 @@ export interface ApiError {
   message: string;
   domain: ErrorDomain;
   retryable: boolean;
-  retry_after_ms?: number;
-  suggestion?: string;
-  details?: Record<string, unknown>;
+  retry_after_ms?: number | undefined;
+  suggestion?: string | undefined;
+  details?: Record<string, unknown> | undefined;
 }
 
 export interface ApiErrorResponse {
@@ -35,7 +35,7 @@ export interface ApiErrorResponse {
 
 export interface ApiSuccessResponse<T> {
   data: T;
-  meta?: Record<string, unknown>;
+  meta?: Record<string, unknown> | undefined;
 }
 
 // ─── Auth & API Keys ─────────────────────────────────────────────────────────
@@ -68,8 +68,8 @@ export interface ApiKey {
 export interface ApiKeyCreateRequest {
   name: string;
   scopes: ApiKeyScope[];
-  rate_limit?: number;
-  expires_at?: ISO8601;
+  rate_limit?: number | undefined;
+  expires_at?: ISO8601 | undefined;
 }
 
 export interface ApiKeyCreateResponse {
@@ -96,10 +96,10 @@ export interface Provider {
   domain: ProviderDomain;
   is_active: boolean;
   priority: number;
-  supported_assets?: string[];
-  supported_networks?: string[];
-  min_amount?: Numeric;
-  max_amount?: Numeric;
+  supported_assets?: string[] | undefined;
+  supported_networks?: string[] | undefined;
+  min_amount?: Numeric | undefined;
+  max_amount?: Numeric | undefined;
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
@@ -143,11 +143,11 @@ export interface SwapQuoteRequest {
   from_asset: string;       // e.g. "BTC"
   to_asset: string;         // e.g. "ETH"
   amount: Numeric;          // Amount of from_asset
-  from_network?: string;    // e.g. "bitcoin"
-  to_network?: string;      // e.g. "ethereum"
-  affiliate_id?: UUID;
-  affiliate_link_id?: UUID;
-  idempotency_key?: string;
+  from_network?: string | undefined;    // e.g. "bitcoin"
+  to_network?: string | undefined;      // e.g. "ethereum"
+  affiliate_id?: UUID | undefined;
+  affiliate_link_id?: UUID | undefined;
+  idempotency_key?: string | undefined;
 }
 
 export interface SwapQuote {
@@ -177,9 +177,9 @@ export interface SwapQuoteResponse {
 export interface SwapExecuteRequest {
   quote_id: UUID;
   recipient_address: string;
-  refund_address?: string;
-  affiliate_id?: UUID;
-  affiliate_link_id?: UUID;
+  refund_address?: string | undefined;
+  affiliate_id?: UUID | undefined;
+  affiliate_link_id?: UUID | undefined;
   idempotency_key: string;    // Required for all state-changing ops
 }
 
@@ -207,14 +207,14 @@ export interface SwapStatusResponse {
 export interface InvoiceCreateRequest {
   asset: string;              // e.g. "USDC"
   amount: Numeric;
-  network?: string;
-  description?: string;
-  expires_in_seconds?: number;
-  callback_url?: string;
-  affiliate_id?: UUID;
-  affiliate_link_id?: UUID;
+  network?: string | undefined;
+  description?: string | undefined;
+  expires_in_seconds?: number | undefined;
+  callback_url?: string | undefined;
+  affiliate_id?: UUID | undefined;
+  affiliate_link_id?: UUID | undefined;
   idempotency_key: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 export type InvoiceStatus = 'pending' | 'paid' | 'expired' | 'overpaid' | 'underpaid';
@@ -273,8 +273,8 @@ export interface EarnDepositRequest {
   strategy_id: UUID;
   amount: Numeric;
   from_address: string;
-  affiliate_id?: UUID;
-  affiliate_link_id?: UUID;
+  affiliate_id?: UUID | undefined;
+  affiliate_link_id?: UUID | undefined;
   idempotency_key: string;
 }
 
@@ -305,8 +305,8 @@ export interface EarnDepositResponse {
 export interface EarnWithdrawRequest {
   position_id: UUID;
   to_address: string;
-  affiliate_id?: UUID;
-  affiliate_link_id?: UUID;
+  affiliate_id?: UUID | undefined;
+  affiliate_link_id?: UUID | undefined;
   idempotency_key: string;
 }
 
@@ -325,7 +325,7 @@ export interface EarnPositionsResponse {
 export interface WalletAddressRequest {
   asset: string;
   network: string;
-  label?: string;
+  label?: string | undefined;
 }
 
 export interface WalletAddress {
@@ -362,7 +362,7 @@ export interface Affiliate {
 
 export interface AffiliateLinkCreateRequest {
   target_url: string;
-  label?: string;
+  label?: string | undefined;
 }
 
 export interface AffiliateLink {

@@ -3,7 +3,7 @@
  * Tests use a mock SQL implementation to avoid needing a real PostgreSQL.
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import { addNumericStrings, generateUUID, multiplyNumericStrings } from '@finlayer/utils';
 
 interface MockRow {
@@ -14,7 +14,7 @@ interface MockRow {
  * Very simple in-memory "SQL" mock that covers the patterns used in services.
  * For each table, stores rows as an array and supports basic INSERT/SELECT/UPDATE.
  */
-export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
+export function createMockSql(): Sql & { _tables: Map<string, MockRow[]> } {
   const tables = new Map<string, MockRow[]>();
   const lockedRevenueEventIds = new Set<string>();
   const initTable = (name: string) => {
@@ -912,7 +912,7 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return (target as unknown as Record<string, unknown>)[prop as string];
       },
     }
-  ) as SQL & { _tables: Map<string, MockRow[]> };
+  ) as Sql & { _tables: Map<string, MockRow[]> };
 
   return mockSql;
 }

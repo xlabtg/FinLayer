@@ -4,7 +4,7 @@
  * Auto-calculates platform + affiliate splits for each transaction.
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import { generateUUID, multiplyNumericStrings } from '@finlayer/utils';
 import type { ProviderDomain, UUID } from '@finlayer/types';
 import type { RevenueConfig } from '../shared/types/index.js';
@@ -31,7 +31,7 @@ export class RevenueService {
   private readonly affiliateService: AffiliateService;
 
   constructor(
-    private readonly sql: SQL,
+    private readonly sql: Sql,
     private readonly config: RevenueConfig
   ) {
     this.affiliateService = new AffiliateService(sql);

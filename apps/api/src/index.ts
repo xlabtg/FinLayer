@@ -43,7 +43,7 @@ async function buildApp() {
             url: request.url,
             hostname: request.hostname,
             remoteAddress: request.ip,
-            remotePort: request.socket?.remotePort,
+            ...(request.socket.remotePort !== undefined && { remotePort: request.socket.remotePort }),
           };
         },
       },
@@ -133,7 +133,7 @@ Authorization: Bearer fl_live_<your-key>
   await app.register(swaggerUi, {
     routePrefix: '/docs',
     uiConfig: {
-      docExpansion: 'tag',
+      docExpansion: 'list',
       deepLinking: true,
     },
     // Swagger UI serves browser assets under /docs and needs its own CSP.
