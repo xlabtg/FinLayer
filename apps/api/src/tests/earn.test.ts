@@ -3,13 +3,18 @@
  * Tests: list strategies → deposit → position refresh → withdraw
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import Fastify from 'fastify';
+import type { FastifyInstance } from 'fastify';
+import type { AddressInfo } from 'node:net';
 import { EarnService } from '../../../../modules/earn/service.js';
+import { earnRoutes } from '../../../../modules/earn/routes.js';
 import { AaveV3Adapter, aaveLiquidityRateToApy, type AaveRpcClient } from '../../../../modules/providers/aave/adapter.js';
 import { CompoundV3Adapter, type CompoundRpcClient } from '../../../../modules/providers/compound/adapter.js';
 import { MockEarnProvider } from './mock-earn-provider.js';
 import { createMockSql, createTestUserId } from './setup.js';
 import { generateUUID } from '@finlayer/utils';
+import errorHandlerPlugin from '../plugins/error-handler.js';
 import type { IEarnProviderAdapter } from '../../../../modules/shared/types/index.js';
 import {
   ValidationError,
@@ -20,6 +25,30 @@ import {
   EarnDepositBelowMinimumError,
   EarnPositionLockedError,
 } from '../../../../modules/shared/errors/index.js';
+
+const originalFetch = globalThis.fetch;
+const originalAaveRpcUrl = process.env['AAVE_RPC_URL'];
+const originalCompoundRpcUrl = process.env['COMPOUND_RPC_URL'];
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  if (originalAaveRpcUrl === undefined) {
+    delete process.env['AAVE_RPC_URL'];
+  } else {
+    process.env['AAVE_RPC_URL'] = originalAaveRpcUrl;
+  }
+  if (originalCompoundRpcUrl === undefined) {
+    delete process.env['COMPOUND_RPC_URL'];
+  } else {
+    process.env['COMPOUND_RPC_URL'] = originalCompoundRpcUrl;
+  }
+});
+
+async function listenOnRandomPort(app: FastifyInstance): Promise<string> {
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const address = app.server.address() as AddressInfo;
+  return `http://127.0.0.1:${address.port}`;
+}
 
 describe('Earn Service — Strategies', () => {
   let service: EarnService;
@@ -466,6 +495,197 @@ describe('Earn Service — Positions & Withdraw', () => {
       (t) => t['idempotency_key'] === key
     );
     expect(txs.length).toBe(1);
+  });
+});
+
+describe('Earn Routes — default RPC wiring', () => {
+  test('uses the configured AAVE_RPC_URL instead of the unavailable stub', async () => {
+    process.env['AAVE_RPC_URL'] = 'https://rpc.example/aave';
+    delete process.env['COMPOUND_RPC_URL'];
+
+    const userId = createTestUserId();
+    const mockSql = createMockSql();
+    const aaveProviderId = generateUUID();
+    const aTokenAddress = '0x2222222222222222222222222222222222222222';
+    const rpcCalls: unknown[] = [];
+
+    mockSql._tables.get('providers')!.push({
+      id: aaveProviderId,
+      name: 'AaveV3',
+      domain: 'earn',
+      config: {},
+      is_active: true,
+      priority: 90,
+    });
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('https://aave-api-v2.aave.com/data/liquidity/v3')) {
+        const rate = (((1 / 100) / 31_536_000) * 1e27).toString();
+        return new Response(
+          JSON.stringify({
+            reserves: [
+              {
+                symbol: 'USDC',
+                liquidityRate: rate,
+                aTokenAddress,
+                underlyingAsset: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (url === process.env['AAVE_RPC_URL']) {
+        const body = JSON.parse(String(init?.body));
+        rpcCalls.push(body);
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: `0x${'1'.repeat(64)}`,
+          }),
+          { status: 200 }
+        );
+      }
+
+      return new Response(`unexpected fetch: ${url}`, { status: 500 });
+    }) as typeof fetch;
+
+    const app = Fastify({ logger: false });
+    app.decorate('sql', mockSql);
+    app.decorate('authenticate', async (request) => {
+      request.userId = userId;
+    });
+    app.decorate('requireScope', () => async () => {});
+    await app.register(errorHandlerPlugin);
+    await app.register(earnRoutes, { prefix: '/v1/earn' });
+
+    try {
+      const baseUrl = await listenOnRandomPort(app);
+      const response = await originalFetch(`${baseUrl}/v1/earn/deposit`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          strategy_id: `${aaveProviderId}:${aTokenAddress}`,
+          amount: '1',
+          from_address: '0x1111111111111111111111111111111111111111',
+          idempotency_key: generateUUID(),
+        }),
+      });
+
+      expect(response.status).toBe(202);
+      expect(rpcCalls.length).toBe(1);
+      expect(rpcCalls[0]).toMatchObject({ method: 'eth_sendTransaction' });
+      const tx = mockSql._tables.get('transactions')!.find(
+        (row) => row['provider_id'] === aaveProviderId
+      );
+      expect(String(tx?.['provider_tx_id']).startsWith('aave-v3:1:ethereum:USDC:')).toBe(true);
+      expect(
+        ((tx?.['metadata'] as { earn?: { deposit_address?: string } })?.earn?.deposit_address)
+      ).toBe('0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('uses the configured COMPOUND_RPC_URL instead of the unavailable stub', async () => {
+    delete process.env['AAVE_RPC_URL'];
+    process.env['COMPOUND_RPC_URL'] = 'https://rpc.example/compound';
+
+    const userId = createTestUserId();
+    const mockSql = createMockSql();
+    const compoundProviderId = generateUUID();
+    const marketAddress = '0x3333333333333333333333333333333333333333';
+    const rpcCalls: unknown[] = [];
+
+    mockSql._tables.get('providers')!.push({
+      id: compoundProviderId,
+      name: 'CompoundV3',
+      domain: 'earn',
+      config: {},
+      is_active: true,
+      priority: 80,
+    });
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('https://v3-api.compound.finance/markets')) {
+        return new Response(
+          JSON.stringify({
+            markets: [
+              {
+                cometAddress: marketAddress,
+                baseAsset: { symbol: 'USDC', decimals: 6 },
+                supplyApr: '0.01',
+                chain: 'ethereum',
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (url === process.env['COMPOUND_RPC_URL']) {
+        const body = JSON.parse(String(init?.body));
+        rpcCalls.push(body);
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: `0x${'2'.repeat(64)}`,
+          }),
+          { status: 200 }
+        );
+      }
+
+      return new Response(`unexpected fetch: ${url}`, { status: 500 });
+    }) as typeof fetch;
+
+    const app = Fastify({ logger: false });
+    app.decorate('sql', mockSql);
+    app.decorate('authenticate', async (request) => {
+      request.userId = userId;
+    });
+    app.decorate('requireScope', () => async () => {});
+    await app.register(errorHandlerPlugin);
+    await app.register(earnRoutes, { prefix: '/v1/earn' });
+
+    try {
+      const baseUrl = await listenOnRandomPort(app);
+      const response = await originalFetch(`${baseUrl}/v1/earn/deposit`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          strategy_id: `${compoundProviderId}:${marketAddress}`,
+          amount: '1',
+          from_address: '0x1111111111111111111111111111111111111111',
+          idempotency_key: generateUUID(),
+        }),
+      });
+
+      expect(response.status).toBe(202);
+      expect(rpcCalls.length).toBe(1);
+      expect(rpcCalls[0]).toMatchObject({ method: 'eth_sendTransaction' });
+      const tx = mockSql._tables.get('transactions')!.find(
+        (row) => row['provider_id'] === compoundProviderId
+      );
+      expect(String(tx?.['provider_tx_id']).startsWith('compound-v3:1:ethereum:USDC:')).toBe(
+        true
+      );
+      expect(
+        ((tx?.['metadata'] as { earn?: { deposit_address?: string } })?.earn?.deposit_address)
+      ).toBe(marketAddress);
+    } finally {
+      await app.close();
+    }
   });
 });
 
