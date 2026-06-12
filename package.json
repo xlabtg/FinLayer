@@ -29,7 +29,11 @@
     "@noble/hashes": "^1.3.3",
     "@scure/bip32": "^1.3.3",
     "@scure/bip39": "^1.2.2",
+    "@sentry/node": "^7.109.0",
     "bcryptjs": "^2.4.3",
-    "bs58check": "^3.0.1"
+    "bs58check": "^3.0.1",
+    "fastify-plugin": "^4.5.1",
+    "prom-client": "^15.1.0",
+    "zod": "^3.22.4"
   }
 }
