@@ -4,7 +4,14 @@
  */
 
 import type { SQL } from 'postgres';
-import { generateUUID, nowISO, futureISO, isValidAmount, isValidAssetTicker } from '@finlayer/utils';
+import {
+  generateUUID,
+  nowISO,
+  futureISO,
+  isValidAmount,
+  isValidAssetTicker,
+  isValidCryptoAddress,
+} from '@finlayer/utils';
 import type {
   UUID,
   SwapQuote,
@@ -324,6 +331,13 @@ export class SwapService {
     // Check expiry
     if (new Date() > quoteRow.expires_at) {
       throw new QuoteExpiredError();
+    }
+
+    if (!isValidCryptoAddress(request.recipient_address, quoteRow.to_asset)) {
+      throw new ValidationError(`Invalid recipient_address for ${quoteRow.to_asset}`);
+    }
+    if (request.refund_address && !isValidCryptoAddress(request.refund_address, quoteRow.from_asset)) {
+      throw new ValidationError(`Invalid refund_address for ${quoteRow.from_asset}`);
     }
 
     // Get the provider adapter
