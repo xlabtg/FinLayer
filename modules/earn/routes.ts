@@ -7,7 +7,9 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { EarnService } from './service.js';
 import { AaveV3Adapter, type AaveRpcClient } from '../providers/aave/adapter.js';
+import { AaveV3JsonRpcClient } from '../providers/aave/rpc.js';
 import { CompoundV3Adapter, type CompoundRpcClient } from '../providers/compound/adapter.js';
+import { CompoundV3JsonRpcClient } from '../providers/compound/rpc.js';
 import { ValidationError } from '../shared/errors/index.js';
 import type { IEarnProviderAdapter } from '../shared/types/index.js';
 import { logger } from '../shared/utils/logger.js';
@@ -191,8 +193,8 @@ export async function earnRoutes(fastify: FastifyInstance, opts: EarnRoutesOptio
 }
 
 /**
- * Build default adapters wired to env vars. When RPC URLs aren't present, a
- * no-op RpcClient is used so listing/GETs still work but write ops fail loudly.
+ * Build default adapters wired to env vars. When RPC URLs aren't present,
+ * listing still works through provider APIs but write ops fail loudly.
  */
 function buildDefaultAdapters(): Map<string, IEarnProviderAdapter> {
   const providers = new Map<string, IEarnProviderAdapter>();
@@ -202,11 +204,19 @@ function buildDefaultAdapters(): Map<string, IEarnProviderAdapter> {
 
   providers.set(
     'AaveV3',
-    new AaveV3Adapter({ rpcClient: makeUnavailableAaveRpc(aaveRpcUrl) })
+    new AaveV3Adapter({
+      rpcClient: aaveRpcUrl
+        ? new AaveV3JsonRpcClient({ rpcUrl: aaveRpcUrl })
+        : makeUnavailableAaveRpc(),
+    })
   );
   providers.set(
     'CompoundV3',
-    new CompoundV3Adapter({ rpcClient: makeUnavailableCompoundRpc(compoundRpcUrl) })
+    new CompoundV3Adapter({
+      rpcClient: compoundRpcUrl
+        ? new CompoundV3JsonRpcClient({ rpcUrl: compoundRpcUrl })
+        : makeUnavailableCompoundRpc(),
+    })
   );
 
   if (!aaveRpcUrl) {
@@ -218,32 +228,30 @@ function buildDefaultAdapters(): Map<string, IEarnProviderAdapter> {
   return providers;
 }
 
-function makeUnavailableAaveRpc(rpcUrl?: string): AaveRpcClient {
+function makeUnavailableAaveRpc(): AaveRpcClient {
   const err = () => {
     throw new ValidationError(
-      rpcUrl
-        ? 'Aave RPC client not yet implemented for this deployment'
-        : 'Aave on-chain client is not configured (set AAVE_RPC_URL)'
+      'Aave on-chain client is not configured (set AAVE_RPC_URL)'
     );
   };
   return {
     deposit: async () => err(),
     withdraw: async () => err(),
     getPosition: async () => err(),
+    isHealthy: async () => false,
   };
 }
 
-function makeUnavailableCompoundRpc(rpcUrl?: string): CompoundRpcClient {
+function makeUnavailableCompoundRpc(): CompoundRpcClient {
   const err = () => {
     throw new ValidationError(
-      rpcUrl
-        ? 'Compound RPC client not yet implemented for this deployment'
-        : 'Compound on-chain client is not configured (set COMPOUND_RPC_URL)'
+      'Compound on-chain client is not configured (set COMPOUND_RPC_URL)'
     );
   };
   return {
     deposit: async () => err(),
     withdraw: async () => err(),
     getPosition: async () => err(),
+    isHealthy: async () => false,
   };
 }

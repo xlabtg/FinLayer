@@ -33,6 +33,7 @@ const DEFAULT_NETWORK = 'ethereum';
 export interface AaveRpcClient {
   /** Submit an on-chain deposit and return the transaction hash + deposit address. */
   deposit(input: {
+    strategyId?: string;
     asset: string;
     amount: string;
     onBehalfOf: string;
@@ -54,6 +55,9 @@ export interface AaveRpcClient {
     asset: string;
     network: string;
   }>;
+
+  /** Optional runtime health check for the configured RPC endpoint. */
+  isHealthy?(): Promise<boolean>;
 }
 
 interface AaveApiReserve {
@@ -109,7 +113,8 @@ export class AaveV3Adapter implements IEarnProviderAdapter {
   async isHealthy(): Promise<boolean> {
     try {
       const res = await this.fetchFn(`${this.apiUrl}/liquidity/v3?poolId=${this.network}`);
-      return res.ok;
+      if (!res.ok) return false;
+      return this.rpcClient.isHealthy ? this.rpcClient.isHealthy() : true;
     } catch {
       return false;
     }
@@ -144,6 +149,7 @@ export class AaveV3Adapter implements IEarnProviderAdapter {
     });
 
     const result = await this.rpcClient.deposit({
+      strategyId: params.strategyId,
       asset: strategy.asset,
       amount: params.amount,
       onBehalfOf: params.fromAddress,
