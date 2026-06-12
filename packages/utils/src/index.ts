@@ -4,6 +4,9 @@
  */
 
 import { randomUUID } from 'crypto';
+import { keccak_256 } from '@noble/hashes/sha3';
+import { bytesToHex } from '@noble/hashes/utils';
+import bs58check from 'bs58check';
 
 // ─── UUID ─────────────────────────────────────────────────────────────────────
 
@@ -128,18 +131,84 @@ export function isPositiveNumericString(value: string): boolean {
 // ─── Asset Validation ─────────────────────────────────────────────────────────
 
 const ASSET_REGEX = /^[A-Z0-9]{2,10}$/;
-const ADDRESS_MIN_LENGTH = 10;
+const EVM_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
+const EVM_NETWORKS = new Set([
+  'ethereum',
+  'polygon',
+  'bsc',
+  'arbitrum',
+  'optimism',
+  'base',
+  'avalanche',
+]);
+const EVM_ASSETS = new Set(['ETH', 'USDC', 'USDT', 'MATIC', 'BNB', 'AVAX']);
+const BITCOIN_IDENTIFIERS = new Set(['bitcoin', 'btc']);
+const BITCOIN_MAINNET_BASE58_VERSIONS = new Set([0x00, 0x05]);
 
 export function isValidAssetTicker(ticker: string): boolean {
   return ASSET_REGEX.test(ticker);
 }
 
-export function isValidCryptoAddress(address: string): boolean {
-  return typeof address === 'string' && address.length >= ADDRESS_MIN_LENGTH;
+export function isValidCryptoAddress(address: string, networkOrAsset?: string): boolean {
+  if (typeof address !== 'string' || address.length === 0 || address !== address.trim()) {
+    return false;
+  }
+
+  const normalized = networkOrAsset?.trim();
+  if (normalized) {
+    if (isBitcoinIdentifier(normalized)) return isValidBitcoinBase58Address(address);
+    if (isEvmIdentifier(normalized)) return isValidEvmAddress(address);
+    return false;
+  }
+
+  return isValidEvmAddress(address) || isValidBitcoinBase58Address(address);
 }
 
 export function isValidAmount(amount: string): boolean {
   return /^\d+(\.\d+)?$/.test(amount) && isPositiveNumericString(amount);
+}
+
+function isBitcoinIdentifier(value: string): boolean {
+  return BITCOIN_IDENTIFIERS.has(value.toLowerCase());
+}
+
+function isEvmIdentifier(value: string): boolean {
+  return EVM_NETWORKS.has(value.toLowerCase()) || EVM_ASSETS.has(value.toUpperCase());
+}
+
+function isValidEvmAddress(address: string): boolean {
+  if (!EVM_ADDRESS_REGEX.test(address)) {
+    return false;
+  }
+
+  const body = address.slice(2);
+  if (body === body.toLowerCase() || body === body.toUpperCase()) {
+    return true;
+  }
+
+  return address === toEip55Checksum(address);
+}
+
+function toEip55Checksum(address: string): string {
+  const lower = address.toLowerCase().replace(/^0x/, '');
+  const hash = bytesToHex(keccak_256(new TextEncoder().encode(lower)));
+  let checksum = '0x';
+
+  for (let i = 0; i < lower.length; i++) {
+    const char = lower[i]!;
+    checksum += parseInt(hash[i]!, 16) >= 8 ? char.toUpperCase() : char;
+  }
+
+  return checksum;
+}
+
+function isValidBitcoinBase58Address(address: string): boolean {
+  try {
+    const decoded = bs58check.decode(address);
+    return decoded.length === 21 && BITCOIN_MAINNET_BASE58_VERSIONS.has(decoded[0]!);
+  } catch {
+    return false;
+  }
 }
 
 // ─── API Key Helpers ──────────────────────────────────────────────────────────

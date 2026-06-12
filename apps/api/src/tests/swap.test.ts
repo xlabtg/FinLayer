@@ -179,6 +179,18 @@ describe('Swap Flow', () => {
       })).rejects.toBeInstanceOf(IdempotencyError);
     });
 
+    test('rejects invalid recipient address before provider execution', async () => {
+      await expect(swapService.executeSwap(userId, {
+        quote_id: quoteId,
+        recipient_address: 'not-a-real-wallet-address',
+        idempotency_key: generateUUID(),
+      })).rejects.toBeInstanceOf(ValidationError);
+
+      expect(mockProvider.executeSwapCalls).toBe(0);
+      const txs = mockSql._tables.get('transactions') ?? [];
+      expect(txs.length).toBe(0);
+    });
+
     test('throws DuplicateIdempotencyKeyError on duplicate key', async () => {
       const idempotencyKey = generateUUID();
 
@@ -383,7 +395,7 @@ describe('Swap Flow', () => {
       const tx = await swapService.executeSwap(userId, {
         quote_id: quoteResponse.best_quote_id,
         recipient_address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
-        refund_address: '0xSenderAddress',
+        refund_address: '0x52908400098527886E0F7030069857D2E4169EE7',
         idempotency_key: `test-flow-${generateUUID()}`,
       });
 
