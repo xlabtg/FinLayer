@@ -21,6 +21,10 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
     if (!tables.has(name)) tables.set(name, []);
     return tables.get(name)!;
   };
+  const uniqueViolation = (constraint: string) => Object.assign(
+    new Error(`duplicate key value violates unique constraint "${constraint}"`),
+    { code: '23505', constraint }
+  );
 
   // Split a comma-separated clause at the top level only, so commas inside
   // function calls like COALESCE(?, col) don't break parsing.
@@ -668,12 +672,21 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('INSERT INTO AFFILIATE_PAYOUT_ITEMS')) {
+        const table = initTable('affiliate_payout_items');
+        const payoutId = values[0];
+        const revenueEventId = values[1];
+        if (table.some(r => r['payout_id'] === payoutId && r['revenue_event_id'] === revenueEventId)) {
+          return Promise.reject(uniqueViolation('affiliate_payout_items_pkey'));
+        }
+        if (table.some(r => r['revenue_event_id'] === revenueEventId)) {
+          return Promise.reject(uniqueViolation('affiliate_payout_items_revenue_event_id_key'));
+        }
         const row: MockRow = {
-          payout_id: values[0],
-          revenue_event_id: values[1],
+          payout_id: payoutId,
+          revenue_event_id: revenueEventId,
           amount: values[2],
         };
-        initTable('affiliate_payout_items').push(row);
+        table.push(row);
         return Promise.resolve([row]);
       }
 
