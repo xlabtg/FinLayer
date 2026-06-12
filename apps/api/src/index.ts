@@ -55,9 +55,7 @@ async function buildApp() {
 
   // ─── Security ──────────────────────────────────────────────────────────────
 
-  await app.register(helmet, {
-    contentSecurityPolicy: false, // Disabled for Swagger UI
-  });
+  await app.register(helmet);
 
   await app.register(cors, {
     origin: resolveCorsOrigins(),
@@ -138,6 +136,9 @@ Authorization: Bearer fl_live_<your-key>
       docExpansion: 'tag',
       deepLinking: true,
     },
+    // Swagger UI serves browser assets under /docs and needs its own CSP.
+    // staticCSP is scoped to the documentation plugin and overwrites the
+    // global Helmet CSP only for documentation routes.
     staticCSP: true,
   });
 
