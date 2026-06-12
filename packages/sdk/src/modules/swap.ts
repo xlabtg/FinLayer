@@ -50,7 +50,8 @@ export class SwapModule {
     return this.client.request<SwapTransaction>(
       'POST',
       '/v1/swap/execute',
-      this.client['withAffiliate'](params)
+      this.client['withAffiliate'](params),
+      { idempotencyKey: params.idempotency_key }
     );
   }
 
