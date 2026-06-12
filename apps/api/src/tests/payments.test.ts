@@ -5,7 +5,8 @@
  * Uses mock DB and mock provider — no external dependencies.
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { createHmac } from 'crypto';
 import { PaymentsService } from '../../../../modules/payments/service.js';
 import { MockPaymentProvider } from './mock-payment-provider.js';
 import { createMockSql, createTestUserId } from './setup.js';
@@ -19,15 +20,9 @@ import {
   ValidationError,
 } from '../../../../modules/shared/errors/index.js';
 import type { IPaymentProviderAdapter } from '../../../../modules/shared/types/index.js';
-import {
-  MoonPayAdapter,
-} from '../../../../modules/providers/moonpay/adapter.js';
-import {
-  TransakAdapter,
-} from '../../../../modules/providers/transak/adapter.js';
-import {
-  NowPaymentsAdapter,
-} from '../../../../modules/providers/nowpayments/adapter.js';
+import { MoonPayAdapter } from '../../../../modules/providers/moonpay/adapter.js';
+import { TransakAdapter } from '../../../../modules/providers/transak/adapter.js';
+import { NowPaymentsAdapter } from '../../../../modules/providers/nowpayments/adapter.js';
 
 describe('Payments Flow', () => {
   let paymentsService: PaymentsService;
@@ -460,10 +455,245 @@ describe('Payments Flow', () => {
         })
       ).rejects.toBeInstanceOf(ValidationError);
     });
+
+    test('MoonPay webhook with real transaction id updates invoice through externalTransactionId', async () => {
+      const secret = 'moonpay-webhook-secret';
+      const moonPay = new MoonPayAdapter('moonpay-api-key', secret);
+      const service = new PaymentsService(
+        mockSql as never,
+        new Map<string, IPaymentProviderAdapter>([[moonPay.name, moonPay]]),
+        'http://test.local'
+      );
+      mockSql._tables.get('providers')!.push({
+        id: generateUUID(),
+        name: moonPay.name,
+        domain: 'payments',
+        config: {},
+        is_active: true,
+        priority: 100,
+      });
+
+      const invoice = await service.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: generateUUID(),
+        metadata: { provider: moonPay.name },
+      });
+
+      const payload = {
+        type: 'transaction_updated',
+        data: {
+          id: 'mp_real_tx_123',
+          externalTransactionId: invoice.id,
+          status: 'completed',
+          quoteCurrencyAmount: 100,
+          cryptoTransactionId: '0xmoonpay',
+          updatedAt: '2026-06-12T12:00:00.000Z',
+        },
+      };
+      const rawBody = JSON.stringify(payload);
+      const signature = createHmac('sha256', secret).update(rawBody).digest('hex');
+
+      const result = await service.handleWebhook({
+        providerName: moonPay.name,
+        rawBody,
+        headers: { 'moonpay-signature-v2': signature },
+      });
+
+      expect(result.invoiceId).toBe(invoice.id);
+      expect(result.status).toBe('paid');
+      const refreshed = await service.getInvoice(invoice.id, userId);
+      expect(refreshed.status).toBe('paid');
+      expect(refreshed.tx_hash).toBe('0xmoonpay');
+    });
+
+    test('Transak webhook with real order id updates invoice through partnerOrderId', async () => {
+      const secret = 'transak-webhook-secret';
+      const transak = new TransakAdapter('transak-api-key', secret);
+      const service = new PaymentsService(
+        mockSql as never,
+        new Map<string, IPaymentProviderAdapter>([[transak.name, transak]]),
+        'http://test.local'
+      );
+      mockSql._tables.get('providers')!.push({
+        id: generateUUID(),
+        name: transak.name,
+        domain: 'payments',
+        config: {},
+        is_active: true,
+        priority: 100,
+      });
+
+      const invoice = await service.createInvoice(userId, {
+        asset: 'USDC',
+        amount: '100',
+        idempotency_key: generateUUID(),
+        metadata: { provider: transak.name },
+      });
+
+      const payload = {
+        eventID: 'ORDER_COMPLETED',
+        eventName: 'ORDER_COMPLETED',
+        webhookData: {
+          id: 'tk_real_order_123',
+          partnerOrderId: invoice.id,
+          status: 'COMPLETED',
+          cryptoAmount: 98.5,
+          transactionHash: '0xtransak',
+          updatedAt: '2026-06-12T12:00:00.000Z',
+        },
+      };
+      const rawBody = JSON.stringify(payload);
+      const signature = createHmac('sha256', secret).update(rawBody).digest('hex');
+
+      const result = await service.handleWebhook({
+        providerName: transak.name,
+        rawBody,
+        headers: { 'x-transak-signature': signature },
+      });
+
+      expect(result.invoiceId).toBe(invoice.id);
+      expect(result.status).toBe('paid');
+      const refreshed = await service.getInvoice(invoice.id, userId);
+      expect(refreshed.status).toBe('paid');
+      expect(refreshed.paid_amount).toBe('98.5');
+      expect(refreshed.tx_hash).toBe('0xtransak');
+    });
   });
 });
 
-describe('Provider webhook signature verification', () => {
+describe('Provider adapter behavior', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('MoonPay: polls by externalTransactionId correlation id', async () => {
+    const requests: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      requests.push(url);
+
+      return new Response(
+        JSON.stringify([
+          {
+            id: 'mp_real_tx_123',
+            externalTransactionId: 'inv_123',
+            status: 'completed',
+            quoteCurrencyAmount: 100,
+            cryptoTransactionId: '0xmoonpay',
+            walletAddress: null,
+            createdAt: '2026-06-12T11:00:00.000Z',
+            updatedAt: '2026-06-12T12:00:00.000Z',
+          },
+        ]),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }) as typeof fetch;
+
+    const adapter = new MoonPayAdapter('test-api-key');
+    const status = await adapter.getInvoiceStatus('inv_123');
+
+    const requestUrl = new URL(requests[0]!);
+    expect(requestUrl.pathname).toBe('/v1/transactions/ext/inv_123');
+    expect(requestUrl.searchParams.get('apiKey')).toBe('test-api-key');
+    expect(status.providerInvoiceId).toBe('inv_123');
+    expect(status.status).toBe('paid');
+    expect(status.paidAmount).toBe('100');
+    expect(status.txHash).toBe('0xmoonpay');
+  });
+
+  test('Transak: polls partner orders by partnerOrderId correlation id', async () => {
+    const requests: { url: string; method: string; body: Record<string, unknown> | undefined }[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const body =
+        typeof init?.body === 'string'
+          ? (JSON.parse(init.body) as Record<string, unknown>)
+          : undefined;
+      requests.push({ url, method: init?.method ?? 'GET', body });
+
+      if (url.endsWith('/partners/api/v2/refresh-token')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              accessToken: 'partner-access-token',
+              expiresAt: Math.floor(Date.now() / 1000) + 3600,
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      if (url.startsWith('https://transak.test/partners/api/v2/orders?')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'tk_real_order_123',
+                partnerOrderId: 'inv_123',
+                status: 'COMPLETED',
+                cryptoAmount: 98.5,
+                transactionHash: '0xtransak',
+                walletAddress: '0xwallet',
+                createdAt: '2026-06-12T11:00:00.000Z',
+                updatedAt: '2026-06-12T12:00:00.000Z',
+                completedAt: '2026-06-12T12:00:00.000Z',
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unexpected URL: ${url}` }), { status: 500 });
+    }) as typeof fetch;
+
+    const adapter = new TransakAdapter(
+      'test-api-key',
+      'test-webhook-secret',
+      'https://transak.test',
+      'test-api-secret'
+    );
+    const status = await adapter.getInvoiceStatus('inv_123');
+
+    const refreshRequest = requests[0]!;
+    expect(refreshRequest.url).toBe('https://transak.test/partners/api/v2/refresh-token');
+    expect(refreshRequest.method).toBe('POST');
+    expect(refreshRequest.body).toEqual({ apiKey: 'test-api-key' });
+
+    const ordersRequest = requests[1]!;
+    const ordersUrl = new URL(ordersRequest.url);
+    expect(ordersUrl.pathname).toBe('/partners/api/v2/orders');
+    expect(ordersUrl.searchParams.get('filter[partnerOrderId]')).toBe('inv_123');
+    expect(ordersUrl.searchParams.get('filter[productsAvailed]')).toBe(JSON.stringify(['BUY']));
+
+    expect(status.providerInvoiceId).toBe('inv_123');
+    expect(status.status).toBe('paid');
+    expect(status.paidAmount).toBe('98.5');
+    expect(status.txHash).toBe('0xtransak');
+  });
+
   test('MoonPay: verifies HMAC-SHA256 signature', () => {
     const secret = 'test_moonpay_secret';
     const adapter = new MoonPayAdapter('test-api-key', secret);
@@ -473,8 +703,7 @@ describe('Provider webhook signature verification', () => {
       data: { id: 'mp_tx_123', status: 'completed', quoteCurrencyAmount: 10, updatedAt: '2026-01-01T00:00:00Z' },
     });
 
-    const crypto = require('crypto');
-    const sig = crypto.createHmac('sha256', secret).update(body).digest('hex');
+    const sig = createHmac('sha256', secret).update(body).digest('hex');
 
     const result = adapter.verifyWebhook({ rawBody: body, headers: { 'moonpay-signature-v2': sig } });
     expect(result).not.toBeNull();
@@ -501,8 +730,7 @@ describe('Provider webhook signature verification', () => {
       webhookData: { id: 'tk_order_1', status: 'COMPLETED', cryptoAmount: 5, transactionHash: '0xdead', updatedAt: '2026-01-01T00:00:00Z' },
     });
 
-    const crypto = require('crypto');
-    const sig = crypto.createHmac('sha256', secret).update(body).digest('hex');
+    const sig = createHmac('sha256', secret).update(body).digest('hex');
 
     const result = adapter.verifyWebhook({ rawBody: body, headers: { 'x-transak-signature': sig } });
     expect(result).not.toBeNull();
@@ -537,8 +765,7 @@ describe('Provider webhook signature verification', () => {
         return acc;
       }, {})
     );
-    const crypto = require('crypto');
-    const sig = crypto.createHmac('sha512', secret).update(canonical).digest('hex');
+    const sig = createHmac('sha512', secret).update(canonical).digest('hex');
 
     const result = adapter.verifyWebhook({ rawBody: body, headers: { 'x-nowpayments-sig': sig } });
     expect(result).not.toBeNull();

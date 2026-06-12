@@ -186,6 +186,7 @@ export class PaymentsService {
       const providerParams = {
         asset,
         amount: request.amount,
+        correlationId: invoiceId,
         webhookUrl,
         ...(request.network !== undefined ? { network: request.network } : {}),
         ...(request.description !== undefined ? { description: request.description } : {}),

@@ -171,6 +171,8 @@ export interface InvoiceCreateParams {
   network?: string;
   description?: string;
   expiresInSeconds?: number;
+  /** Stable FinLayer id to pass into provider-supported external/order fields. */
+  correlationId: string;
   /** Canonical FinLayer endpoint for provider status notifications. */
   webhookUrl: string;
 }

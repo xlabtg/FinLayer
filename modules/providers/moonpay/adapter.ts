@@ -40,6 +40,7 @@ interface MoonPayTransaction {
   quoteCurrencyAmount: number | null;
   cryptoTransactionId: string | null;
   walletAddress: string | null;
+  externalTransactionId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -73,7 +74,7 @@ export class MoonPayAdapter implements IPaymentProviderAdapter {
   }
 
   async createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult> {
-    const { asset, amount, network, webhookUrl } = params;
+    const { asset, amount, network, webhookUrl, correlationId } = params;
 
     // MoonPay uses widget-based flow: we build a signed widget URL that the
     // buyer opens. The webhook delivery confirms payment.
@@ -81,12 +82,13 @@ export class MoonPayAdapter implements IPaymentProviderAdapter {
       apiKey: this.apiKey,
       currencyCode: asset.toLowerCase(),
       baseCurrencyAmount: String(amount),
+      externalTransactionId: correlationId,
     });
     if (network) query.set('network', network);
     query.set('redirectURL', webhookUrl);
 
     const widgetUrl = `${MOONPAY_WIDGET_URL}?${query.toString()}`;
-    const providerInvoiceId = `mp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const providerInvoiceId = correlationId;
 
     logger.debug('MoonPay invoice created', { providerInvoiceId, asset, amount });
 
@@ -98,14 +100,25 @@ export class MoonPayAdapter implements IPaymentProviderAdapter {
   }
 
   async getInvoiceStatus(providerInvoiceId: string): Promise<InvoiceStatusResult> {
-    const res = await this.request<MoonPayTransaction>(`/v1/transactions/${providerInvoiceId}`);
+    const res = await this.request<MoonPayTransaction | MoonPayTransaction[]>(
+      `/v1/transactions/ext/${encodeURIComponent(providerInvoiceId)}`
+    );
+    const transaction = Array.isArray(res) ? res[0] : res;
+
+    if (!transaction) {
+      return {
+        providerInvoiceId,
+        status: 'pending',
+      };
+    }
 
     return {
-      providerInvoiceId: res.id,
-      status: STATUS_MAP[res.status] ?? 'pending',
-      paidAmount: res.quoteCurrencyAmount != null ? String(res.quoteCurrencyAmount) : undefined,
-      txHash: res.cryptoTransactionId ?? undefined,
-      paidAt: res.status === 'completed' ? res.updatedAt : undefined,
+      providerInvoiceId: transaction.externalTransactionId ?? providerInvoiceId,
+      status: STATUS_MAP[transaction.status] ?? 'pending',
+      paidAmount:
+        transaction.quoteCurrencyAmount != null ? String(transaction.quoteCurrencyAmount) : undefined,
+      txHash: transaction.cryptoTransactionId ?? undefined,
+      paidAt: transaction.status === 'completed' ? transaction.updatedAt : undefined,
     };
   }
 
@@ -123,6 +136,7 @@ export class MoonPayAdapter implements IPaymentProviderAdapter {
         status?: MoonPayTransaction['status'];
         cryptoTransactionId?: string | null;
         quoteCurrencyAmount?: number | null;
+        externalTransactionId?: string | null;
         updatedAt?: string;
       };
       object?: string;
@@ -134,11 +148,12 @@ export class MoonPayAdapter implements IPaymentProviderAdapter {
     }
 
     const data = payload.data ?? {};
-    const providerInvoiceId = data.id ?? '';
+    const providerInvoiceId = data.externalTransactionId ?? data.id ?? '';
     if (!providerInvoiceId) return null;
+    const providerTransactionId = data.id ?? providerInvoiceId;
 
     return {
-      providerEventId: `${providerInvoiceId}:${data.status ?? 'unknown'}`,
+      providerEventId: `${providerTransactionId}:${data.status ?? 'unknown'}`,
       providerInvoiceId,
       eventType: payload.type ?? 'transaction_updated',
       status: data.status ? STATUS_MAP[data.status] ?? 'pending' : 'pending',
