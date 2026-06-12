@@ -272,6 +272,22 @@ export class EarnPositionLockedError extends FinLayerError {
   }
 }
 
+export class EarnPositionNotActiveError extends FinLayerError {
+  constructor(positionId: string, status: string) {
+    super(
+      'EARN_POSITION_NOT_ACTIVE',
+      `Earn position ${positionId} is ${status}; withdrawal requires active status`,
+      'earn',
+      422,
+      {
+        retryable: false,
+        details: { position_id: positionId, status },
+        suggestion: 'Wait until the position is active before requesting withdrawal',
+      }
+    );
+  }
+}
+
 // ─── Transaction Errors ───────────────────────────────────────────────────────
 
 export class TransactionNotFoundError extends FinLayerError {

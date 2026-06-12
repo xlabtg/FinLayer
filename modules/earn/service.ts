@@ -15,6 +15,7 @@ import type {
   EarnWithdrawRequest,
   EarnWithdrawResponse,
   EarnPositionsResponse,
+  TransactionStatus,
 } from '@finlayer/types';
 import type { IEarnProviderAdapter, EarnStrategyResult } from '../shared/types/index.js';
 import {
@@ -25,6 +26,7 @@ import {
   EarnPositionNotFoundError,
   EarnDepositBelowMinimumError,
   EarnPositionLockedError,
+  EarnPositionNotActiveError,
 } from '../shared/errors/index.js';
 import { RevenueService } from '../swap/revenue.js';
 import { logger } from '../shared/utils/logger.js';
@@ -49,6 +51,8 @@ interface DbEarnPosition {
   created_at: Date;
   updated_at: Date;
 }
+
+type EarnPositionStatus = DbEarnPosition['status'];
 
 export class EarnService {
   private readonly revenueService: RevenueService;
@@ -94,7 +98,7 @@ export class EarnService {
 
   /**
    * Initiate a deposit into an earn strategy.
-   * Creates a transaction record and an earn_positions row in 'pending' state.
+   * Creates a transaction record and an earn_positions row matching the provider state.
    */
   async deposit(userId: UUID, request: EarnDepositRequest): Promise<EarnDepositResponse> {
     if (!request.idempotency_key) {
@@ -190,6 +194,8 @@ export class EarnService {
     }
 
     // Finalise the reserved transaction with the provider's result.
+    const initialPositionStatus = this.positionStatusFromDepositStatus(depositResult.status);
+
     await this.sql`
       UPDATE transactions
       SET status = ${depositResult.status},
@@ -221,7 +227,7 @@ export class EarnService {
         ${providerStrategyId}, ${depositResult.providerPositionId},
         ${strategy.asset}, ${strategy.network},
         ${request.amount}, ${request.amount}, ${'0'},
-        'pending', ${txId}, ${unlocksAt},
+        ${initialPositionStatus}, ${txId}, ${unlocksAt},
         ${now}, ${now}
       )
     `;
@@ -256,7 +262,7 @@ export class EarnService {
       deposited_amount: request.amount,
       current_value: request.amount,
       earned_yield: '0',
-      status: 'pending',
+      status: initialPositionStatus,
       deposit_tx_hash: null,
       deposit_address: depositResult.depositAddress,
       unlocks_at: unlocksAt,
@@ -290,6 +296,9 @@ export class EarnService {
     }
     if (row.status === 'withdrawn') {
       throw new ValidationError('Position has already been withdrawn');
+    }
+    if (row.status !== 'active') {
+      throw new EarnPositionNotActiveError(request.position_id, row.status);
     }
     if (row.unlocks_at && row.unlocks_at > new Date()) {
       throw new EarnPositionLockedError(row.unlocks_at.toISOString());
@@ -377,11 +386,14 @@ export class EarnService {
       WHERE id = ${txId}
     `;
 
-    await this.sql`
-      UPDATE earn_positions
-      SET status = 'withdrawn', updated_at = NOW()
-      WHERE id = ${request.position_id}
-    `;
+    const withdrawalCompleted = this.isCompletedTransactionStatus(withdrawResult.status);
+    if (withdrawalCompleted) {
+      await this.sql`
+        UPDATE earn_positions
+        SET status = 'withdrawn', updated_at = NOW()
+        WHERE id = ${request.position_id}
+      `;
+    }
 
     logger.info('Earn withdraw executed', {
       txId,
@@ -389,9 +401,13 @@ export class EarnService {
       provider: row.provider_name,
     });
 
+    const responseRow: DbEarnPosition & { provider_name: string } = withdrawalCompleted
+      ? { ...row, status: 'withdrawn', updated_at: new Date(now) }
+      : row;
     const position = await this.buildPositionFromRow(
-      { ...row, status: 'withdrawn', updated_at: new Date(now) },
-      adapter
+      responseRow,
+      adapter,
+      { refresh: false }
     );
 
     return {
@@ -475,19 +491,25 @@ export class EarnService {
 
   private async buildPositionFromRow(
     row: DbEarnPosition & { provider_name: string },
-    adapter?: IEarnProviderAdapter
+    adapter?: IEarnProviderAdapter,
+    options: { refresh?: boolean } = {}
   ): Promise<EarnPosition> {
     let currentValue = row.current_value;
     let earnedYield = row.earned_yield;
     let status = row.status;
 
-    // Refresh live value for active positions if adapter available.
-    if (adapter && row.provider_position_id && status === 'active') {
+    // Refresh live value for non-terminal positions if adapter available.
+    if (
+      (options.refresh ?? true) &&
+      adapter &&
+      row.provider_position_id &&
+      this.isRefreshablePositionStatus(status)
+    ) {
       try {
         const live = await adapter.getPosition(row.provider_position_id);
         currentValue = live.currentValue;
         earnedYield = live.earnedYield;
-        status = live.status;
+        status = this.nextPositionStatus(status, live.status);
 
         await this.sql`
           UPDATE earn_positions
@@ -525,6 +547,34 @@ export class EarnService {
       created_at: row.created_at.toISOString(),
       updated_at: row.updated_at.toISOString(),
     };
+  }
+
+  private positionStatusFromDepositStatus(status: TransactionStatus): EarnPositionStatus {
+    return status === 'completed' ? 'active' : 'pending';
+  }
+
+  private isCompletedTransactionStatus(status: TransactionStatus): boolean {
+    return status === 'completed';
+  }
+
+  private isRefreshablePositionStatus(status: EarnPositionStatus): boolean {
+    return status !== 'withdrawn';
+  }
+
+  private nextPositionStatus(
+    currentStatus: EarnPositionStatus,
+    liveStatus: EarnPositionStatus
+  ): EarnPositionStatus {
+    if (currentStatus === 'withdrawn') {
+      return 'withdrawn';
+    }
+    if (liveStatus === 'withdrawn') {
+      return 'withdrawn';
+    }
+    if (currentStatus === 'active' && liveStatus === 'pending') {
+      return 'active';
+    }
+    return liveStatus;
   }
 
   private strategyStub(row: DbEarnPosition & { provider_name: string }): EarnStrategy {

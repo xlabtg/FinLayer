@@ -266,6 +266,12 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
 
       // ─── Earn Positions ─────────────────────────────────────────────────────
       if (query.startsWith('INSERT INTO EARN_POSITIONS')) {
+        const hasBoundStatus = values.length >= 15;
+        const statusIndex = 10;
+        const depositTransactionIndex = hasBoundStatus ? 11 : 10;
+        const unlocksAtIndex = hasBoundStatus ? 12 : 11;
+        const createdAtIndex = hasBoundStatus ? 13 : 12;
+        const updatedAtIndex = hasBoundStatus ? 14 : 13;
         const row: MockRow = {
           id: values[0],
           user_id: values[1],
@@ -277,12 +283,12 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
           deposited_amount: values[7],
           current_value: values[8],
           earned_yield: values[9],
-          status: 'pending',
+          status: hasBoundStatus ? values[statusIndex] : 'pending',
           deposit_tx_hash: null,
-          deposit_transaction_id: values[10],
-          unlocks_at: values[11] ? new Date(values[11] as string) : null,
-          created_at: new Date(values[12] as string),
-          updated_at: new Date(values[13] as string),
+          deposit_transaction_id: values[depositTransactionIndex],
+          unlocks_at: values[unlocksAtIndex] ? new Date(values[unlocksAtIndex] as string) : null,
+          created_at: new Date(values[createdAtIndex] as string),
+          updated_at: new Date(values[updatedAtIndex] as string),
         };
         initTable('earn_positions').push(row);
         return Promise.resolve([row]);
