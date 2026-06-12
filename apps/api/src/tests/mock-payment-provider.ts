@@ -25,6 +25,9 @@ export class MockPaymentProvider implements IPaymentProviderAdapter {
   /** Number of times createInvoice has been invoked (idempotency tests). */
   public createInvoiceCalls = 0;
 
+  /** Last create parameters, used by webhook routing tests. */
+  public lastCreateInvoiceParams: InvoiceCreateParams | null = null;
+
   /** Optional artificial delay (ms) before createInvoice resolves, to widen the concurrency race window. */
   public createInvoiceDelayMs = 0;
 
@@ -37,6 +40,7 @@ export class MockPaymentProvider implements IPaymentProviderAdapter {
 
   async createInvoice(params: InvoiceCreateParams): Promise<InvoiceResult> {
     this.createInvoiceCalls += 1;
+    this.lastCreateInvoiceParams = params;
     if (this.createInvoiceDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.createInvoiceDelayMs));
     }
