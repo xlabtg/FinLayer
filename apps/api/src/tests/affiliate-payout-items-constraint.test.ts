@@ -4,9 +4,9 @@ import { generateUUID } from '@finlayer/utils';
 
 import { createMockSql } from './setup.js';
 
-const phase4MigrationUrl = new URL('../db/migrations/003_wallet_phase4.sql', import.meta.url);
+const phase4MigrationUrl = new URL('../db/migrations/005_wallet_phase4.sql', import.meta.url);
 const uniqueMigrationUrl = new URL(
-  '../db/migrations/005_affiliate_payout_items_unique_revenue_event.sql',
+  '../db/migrations/007_affiliate_payout_items_unique_revenue_event.sql',
   import.meta.url
 );
 

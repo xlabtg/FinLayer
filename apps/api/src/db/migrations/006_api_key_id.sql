@@ -1,4 +1,4 @@
--- FinLayer Migration: 004_api_key_id
+-- FinLayer Migration: 006_api_key_id
 -- Description: Add a unique, indexable `key_id` to api_keys so a key can be
 --   located with a single O(1) lookup and verified with exactly one
 --   bcrypt.compare. Fixes the `LIMIT 20` prefix-scan that made authentication
