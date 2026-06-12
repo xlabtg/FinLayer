@@ -18,8 +18,13 @@ import {
   __setEncryptionKeyForTests,
 } from '../../../../modules/wallet/crypto.js';
 import { WalletService } from '../../../../modules/wallet/service.js';
+import { buildBalanceProviders } from '../../../../modules/wallet/routes.js';
 import { MockBalanceProvider } from '../../../../modules/providers/mock-balance/adapter.js';
-import { UnsupportedAssetError, WalletConfigError } from '../../../../modules/shared/errors/index.js';
+import {
+  BalanceProviderError,
+  UnsupportedAssetError,
+  WalletConfigError,
+} from '../../../../modules/shared/errors/index.js';
 import type {
   BalanceQueryParams,
   IWalletBalanceProvider,
@@ -168,6 +173,63 @@ describe('wallet/crypto', () => {
     __setEncryptionKeyForTests(null);
     process.env['WALLET_ENCRYPTION_KEY'] = randomBytes(32).toString('base64');
     expect(() => encrypt('x')).not.toThrow();
+  });
+});
+
+describe('wallet balance provider wiring', () => {
+  test('registers mock balance provider in development without API keys', () => {
+    const providers = buildBalanceProviders({ NODE_ENV: 'development' } as NodeJS.ProcessEnv);
+
+    expect(providers.get('MockBalance')).toBeInstanceOf(MockBalanceProvider);
+  });
+
+  test('does not register mock balance provider in production without explicit opt-in', () => {
+    const providers = buildBalanceProviders({ NODE_ENV: 'production' } as NodeJS.ProcessEnv);
+
+    expect(providers.has('MockBalance')).toBe(false);
+    expect(providers.size).toBe(0);
+  });
+
+  test('does not treat missing NODE_ENV as development for mock balances', () => {
+    const providers = buildBalanceProviders({} as NodeJS.ProcessEnv);
+
+    expect(providers.has('MockBalance')).toBe(false);
+  });
+
+  test('allows explicit mock balance opt-in for production diagnostics', () => {
+    const providers = buildBalanceProviders({
+      NODE_ENV: 'production',
+      WALLET_ENABLE_MOCK_BALANCE_PROVIDER: 'true',
+    } as NodeJS.ProcessEnv);
+
+    expect(providers.get('MockBalance')).toBeInstanceOf(MockBalanceProvider);
+  });
+
+  test('production registry with Alchemy does not add mock fallback provider', () => {
+    const providers = buildBalanceProviders({
+      NODE_ENV: 'production',
+      ALCHEMY_API_KEY: 'test-key',
+    } as NodeJS.ProcessEnv);
+
+    expect([...providers.keys()]).toEqual(['Alchemy']);
+  });
+
+  test('production wiring without API key fails balance lookup instead of returning mock zero', async () => {
+    __setEncryptionKeyForTests(randomBytes(32));
+    try {
+      const walletService = new WalletService(
+        createMockSql() as never,
+        buildBalanceProviders({ NODE_ENV: 'production' } as NodeJS.ProcessEnv)
+      );
+      const userId = createTestUserId();
+      const wallet = await walletService.generateWallet(userId);
+      const bitcoin = wallet.addresses.find(a => a.network === 'bitcoin')!;
+
+      await expect(walletService.getBalance(userId, bitcoin.id))
+        .rejects.toBeInstanceOf(BalanceProviderError);
+    } finally {
+      __setEncryptionKeyForTests(null);
+    }
   });
 });
 
