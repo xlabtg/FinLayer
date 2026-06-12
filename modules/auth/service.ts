@@ -137,10 +137,16 @@ export class AuthService {
     // Check rate limit
     await this.checkRateLimit(matchedRow.id, matchedRow.rate_limit);
 
-    // Update last_used_at asynchronously (fire and forget)
+    // Update last_used_at asynchronously; validation should not fail if this
+    // non-critical write is temporarily unavailable.
     void this.sql`
       UPDATE api_keys SET last_used_at = NOW() WHERE id = ${matchedRow.id}
-    `;
+    `.catch((err: unknown) => {
+      logger.warn('Failed to update API key last_used_at', {
+        keyId: matchedRow.id,
+        error: String(err),
+      });
+    });
 
     return this.mapDbApiKey(matchedRow);
   }
