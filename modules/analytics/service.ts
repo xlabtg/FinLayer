@@ -10,7 +10,7 @@
  * from_asset of the transaction in our schema).
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import type { Numeric, ProviderDomain, UUID } from '@finlayer/types';
 
 export type AnalyticsPeriod = '24h' | '7d' | '30d' | '90d' | 'all';
@@ -75,7 +75,7 @@ export interface RevenueDashboard {
 }
 
 export class AnalyticsService {
-  constructor(private readonly sql: SQL) {}
+  constructor(private readonly sql: Sql) {}
 
   async getDashboard(period: AnalyticsPeriod = '30d'): Promise<RevenueDashboard> {
     const [totals, byDomain, byProvider, timeseries, topAffiliates] = await Promise.all([

@@ -9,10 +9,10 @@ export class FinLayerError extends Error {
   public readonly code: string;
   public readonly domain: ErrorDomain;
   public readonly retryable: boolean;
-  public readonly retry_after_ms?: number;
-  public readonly suggestion?: string;
+  public readonly retry_after_ms: number | undefined;
+  public readonly suggestion: string | undefined;
   public readonly httpStatus: number;
-  public readonly details?: Record<string, unknown>;
+  public readonly details: Record<string, unknown> | undefined;
 
   constructor(
     code: string,
@@ -82,7 +82,13 @@ export class RateLimitError extends FinLayerError {
 
 export class ValidationError extends FinLayerError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super('VALIDATION_ERROR', message, 'general', 400, { details });
+    super(
+      'VALIDATION_ERROR',
+      message,
+      'general',
+      400,
+      details === undefined ? {} : { details }
+    );
   }
 }
 

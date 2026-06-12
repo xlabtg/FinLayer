@@ -20,7 +20,7 @@
  *    PAYOUT_INTERVAL_MS (default: 1 hour).
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import {
   addNumericStrings,
   compareNumericStrings,
@@ -65,7 +65,7 @@ export class AffiliatePayoutScheduler {
   private readonly payoutAsset: string;
 
   constructor(
-    private readonly sql: SQL,
+    private readonly sql: Sql,
     options: SchedulerOptions = {}
   ) {
     this.intervalMs = options.intervalMs ?? 60 * 60 * 1000;
@@ -150,7 +150,9 @@ export class AffiliatePayoutScheduler {
 
   private async createPayout(row: AffiliateWithPending): Promise<PayoutCreationResult> {
     const payoutId = generateUUID();
-    let createdBatch: { amount: string; eventCount: number } | null = null;
+    const createdBatch: { value: { amount: string; eventCount: number } | null } = {
+      value: null,
+    };
     let result: PayoutCreationResult = 'empty';
 
     await this.sql.begin(async (tx) => {
@@ -208,19 +210,19 @@ export class AffiliatePayoutScheduler {
         WHERE id = ${row.affiliate_id}
       `;
 
-      createdBatch = {
+      createdBatch.value = {
         amount: totalPending,
         eventCount: events.length,
       };
       result = 'created';
     });
 
-    if (createdBatch) {
+    if (createdBatch.value) {
       logger.info('Affiliate payout batch created', {
         payoutId,
         affiliateId: row.affiliate_id,
-        amount: createdBatch.amount,
-        eventCount: createdBatch.eventCount,
+        amount: createdBatch.value.amount,
+        eventCount: createdBatch.value.eventCount,
       });
     }
 

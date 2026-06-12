@@ -4,7 +4,7 @@
  * (idempotent), update ledger, emit revenue events.
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import { generateUUID, isValidAmount, nowISO } from '@finlayer/utils';
 import type {
   UUID,
@@ -96,7 +96,7 @@ export class PaymentsService {
   private readonly revenueService: RevenueService;
 
   constructor(
-    private readonly sql: SQL,
+    private readonly sql: Sql,
     private readonly providers: Map<string, IPaymentProviderAdapter>,
     private readonly baseUrl: string = process.env['API_BASE_URL'] ?? 'http://localhost:3000'
   ) {

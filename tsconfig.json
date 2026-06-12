@@ -14,14 +14,29 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
+    "baseUrl": ".",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "paths": {
       "@finlayer/types": ["./packages/types/src/index.ts"],
       "@finlayer/utils": ["./packages/utils/src/index.ts"],
-      "@finlayer/sdk": ["./packages/sdk/src/index.ts"]
+      "@finlayer/sdk": ["./packages/sdk/src/index.ts"],
+      "*": ["*", "./apps/api/node_modules/*"]
     }
   },
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "apps/api/src/**/*.ts",
+    "modules/**/*.ts",
+    "packages/*/src/**/*.ts",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "apps/api/node_modules",
+    "dist",
+    "apps/api/src/tests",
+    "**/*.test.ts",
+    "**/*.e2e.ts"
+  ]
 }

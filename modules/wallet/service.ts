@@ -8,7 +8,7 @@
  *  - Fan out balance queries to the appropriate provider adapter.
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import type {
   UUID,
   WalletAddress,
@@ -95,7 +95,7 @@ export interface WalletGenerateResult {
 
 export class WalletService {
   constructor(
-    private readonly sql: SQL,
+    private readonly sql: Sql,
     private readonly balanceProviders: Map<string, IWalletBalanceProvider>
   ) {}
 

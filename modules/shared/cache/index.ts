@@ -245,8 +245,8 @@ export function swapQuoteCacheKey(params: {
   fromAsset: string;
   toAsset: string;
   amount: string;
-  fromNetwork?: string;
-  toNetwork?: string;
+  fromNetwork?: string | undefined;
+  toNetwork?: string | undefined;
 }): string {
   const parts = [
     'swap-quote',

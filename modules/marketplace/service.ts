@@ -14,7 +14,7 @@
  * the equivalent SDK snippet so the flow can be embedded directly.
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import type { AffiliateLink, UUID } from '@finlayer/types';
 import { isValidAmount } from '@finlayer/utils';
 import { AffiliateService } from '../affiliate/service.js';
@@ -65,7 +65,7 @@ export class MarketplaceService {
   private readonly marketplaceBaseUrl: string;
 
   constructor(
-    private readonly sql: SQL,
+    private readonly sql: Sql,
     marketplaceBaseUrl: string = process.env['MARKETPLACE_BASE_URL'] ?? 'https://app.finlayer.io'
   ) {
     this.affiliates = new AffiliateService(sql);

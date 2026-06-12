@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import type { UUID } from '@finlayer/types';
 
 import { AnalyticsService } from '../../../../modules/analytics/service.js';
@@ -20,7 +20,7 @@ function createCapturingSql() {
       calls.push({ query, params });
       return Promise.resolve([]);
     },
-  } as unknown as SQL;
+  } as unknown as Sql;
 
   return { sql, calls };
 }

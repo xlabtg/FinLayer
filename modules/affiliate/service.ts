@@ -3,7 +3,7 @@
  * Affiliate management: create, track, and distribute revenue.
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import { generateUUID } from '@finlayer/utils';
 import type { UUID, Affiliate, AffiliateLink, AffiliateStats, AffiliateLinkCreateRequest } from '@finlayer/types';
 import { logger } from '../shared/utils/logger.js';
@@ -44,7 +44,7 @@ export interface AffiliateLinkAttribution {
 }
 
 export class AffiliateService {
-  constructor(private readonly sql: SQL) {}
+  constructor(private readonly sql: Sql) {}
 
   /**
    * Get or create an affiliate profile for a user.

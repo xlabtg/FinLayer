@@ -3,7 +3,7 @@
  * Earn orchestration: list strategies, execute deposits/withdrawals, track positions.
  */
 
-import type { SQL } from 'postgres';
+import type { Sql } from 'postgres';
 import { compareNumericStrings, generateUUID, nowISO, isValidAmount } from '@finlayer/utils';
 import type {
   UUID,
@@ -58,7 +58,7 @@ export class EarnService {
   private readonly revenueService: RevenueService;
 
   constructor(
-    private readonly sql: SQL,
+    private readonly sql: Sql,
     /** Map of provider.name → adapter instance. */
     private readonly providers: Map<string, IEarnProviderAdapter>
   ) {

@@ -70,7 +70,9 @@ export async function earnRoutes(fastify: FastifyInstance, opts: EarnRoutesOptio
     },
   }, async (request, reply) => {
     const query = request.query as { asset?: string };
-    const result = await earnService.listStrategies({ asset: query.asset });
+    const result = await earnService.listStrategies(
+      query.asset === undefined ? undefined : { asset: query.asset }
+    );
     return reply.send({ data: result });
   });
 

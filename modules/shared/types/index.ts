@@ -79,11 +79,11 @@ export interface BalanceQueryParams {
   network: string;
   address: string;
   /** Requested asset ticker for asset-aware balance queries. */
-  asset?: string;
+  asset?: string | undefined;
   /** Token contract address when the requested asset is non-native. */
-  tokenContract?: string;
+  tokenContract?: string | undefined;
   /** Token decimals when the requested asset is non-native. */
-  tokenDecimals?: number;
+  tokenDecimals?: number | undefined;
 }
 
 export interface WalletBalanceResult {
@@ -92,7 +92,7 @@ export interface WalletBalanceResult {
   asset: string;
   balance: Numeric;
   decimals: number;
-  balanceUsd?: Numeric;
+  balanceUsd?: Numeric | undefined;
   updatedAt: ISO8601;
 }
 
@@ -102,8 +102,8 @@ export interface SwapQuoteParams {
   fromAsset: string;
   toAsset: string;
   amount: Numeric;
-  fromNetwork?: string;
-  toNetwork?: string;
+  fromNetwork?: string | undefined;
+  toNetwork?: string | undefined;
 }
 
 export interface SwapQuoteResult {
@@ -129,36 +129,36 @@ export interface SwapExecuteParams {
   toAmount: Numeric;
   rate: Numeric;
   recipientAddress: string;
-  refundAddress?: string;
+  refundAddress?: string | undefined;
 }
 
 export interface SwapExecuteResult {
   providerTxId: string;
   depositAddress: string;
   status: TransactionStatus;
-  fromAmount?: Numeric;
-  toAmount?: Numeric;
+  fromAmount?: Numeric | undefined;
+  toAmount?: Numeric | undefined;
 }
 
 export interface SwapStatusResult {
   providerTxId: string;
   status: TransactionStatus;
-  txHash?: string;
-  completedAt?: ISO8601;
+  txHash?: string | undefined;
+  completedAt?: ISO8601 | undefined;
 }
 
 export interface SwapWebhookVerifyParams {
   rawBody: string;
   headers: Record<string, string | string[] | undefined>;
   /** Shared secret the provider uses to sign webhook deliveries. */
-  secret?: string;
+  secret?: string | undefined;
 }
 
 export interface SwapWebhookVerifyResult {
   /** Provider's own transaction id — cross-checked against the target row. */
   providerTxId: string;
   status: TransactionStatus;
-  txHash?: string;
+  txHash?: string | undefined;
   /** True when the provider's signature header matched the shared secret. */
   signatureValid: boolean;
 }
@@ -168,9 +168,9 @@ export interface SwapWebhookVerifyResult {
 export interface InvoiceCreateParams {
   asset: string;
   amount: Numeric;
-  network?: string;
-  description?: string;
-  expiresInSeconds?: number;
+  network?: string | undefined;
+  description?: string | undefined;
+  expiresInSeconds?: number | undefined;
   /** Stable FinLayer id to pass into provider-supported external/order fields. */
   correlationId: string;
   /** Canonical FinLayer endpoint for provider status notifications. */
@@ -186,9 +186,9 @@ export interface InvoiceResult {
 export interface InvoiceStatusResult {
   providerInvoiceId: string;
   status: 'pending' | 'paid' | 'expired' | 'overpaid' | 'underpaid';
-  paidAmount?: Numeric;
-  txHash?: string;
-  paidAt?: ISO8601;
+  paidAmount?: Numeric | undefined;
+  txHash?: string | undefined;
+  paidAt?: ISO8601 | undefined;
 }
 
 // ─── Webhook types ────────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ export interface WebhookVerifyParams {
   rawBody: string;
   headers: Record<string, string | string[] | undefined>;
   /** Shared secret the provider uses to sign webhook deliveries. */
-  secret?: string;
+  secret?: string | undefined;
 }
 
 export interface WebhookVerifyResult {
@@ -206,9 +206,9 @@ export interface WebhookVerifyResult {
   providerInvoiceId: string;
   eventType: string;
   status: InvoiceStatusResult['status'];
-  paidAmount?: Numeric;
-  txHash?: string;
-  paidAt?: ISO8601;
+  paidAmount?: Numeric | undefined;
+  txHash?: string | undefined;
+  paidAt?: ISO8601 | undefined;
   /** True when the provider's signature header matched our shared secret. */
   signatureValid: boolean;
 }
@@ -223,7 +223,7 @@ export interface EarnStrategyResult {
   apy30d: Numeric;
   riskLevel: 'low' | 'medium' | 'high';
   minDeposit: Numeric;
-  maxDeposit?: Numeric;
+  maxDeposit?: Numeric | undefined;
   lockPeriodDays: number;
   protocol: string;
   description: string;
@@ -249,7 +249,7 @@ export interface EarnWithdrawParams {
 export interface EarnWithdrawResult {
   txHash: string;
   status: TransactionStatus;
-  withdrawnAmount?: Numeric;
+  withdrawnAmount?: Numeric | undefined;
 }
 
 export interface EarnPositionResult {
@@ -260,7 +260,7 @@ export interface EarnPositionResult {
   earnedYield: Numeric;
   asset: string;
   network: string;
-  unlocksAt?: ISO8601;
+  unlocksAt?: ISO8601 | undefined;
 }
 
 // ─── Request Context ──────────────────────────────────────────────────────────
@@ -270,8 +270,8 @@ export interface RequestContext {
   apiKeyId: UUID;
   userId: UUID;
   scopes: ApiKeyScope[];
-  affiliateId?: UUID;
-  idempotencyKey?: string;
+  affiliateId?: UUID | undefined;
+  idempotencyKey?: string | undefined;
   timestamp: ISO8601;
 }
 
