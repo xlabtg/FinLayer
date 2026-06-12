@@ -90,7 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_affiliate_links_short_code   ON affiliate_links (
 
 CREATE TABLE IF NOT EXISTS revenue_events (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    transaction_id  UUID         REFERENCES transactions(id),  -- FK added below
+    transaction_id  UUID,        -- FK added below after transactions exists
     source_domain   VARCHAR(20)  NOT NULL CHECK (source_domain IN ('swap', 'payments', 'earn')),
     total_fee       NUMERIC(36,18) NOT NULL,
     fee_asset       VARCHAR(20)  NOT NULL,
@@ -146,14 +146,52 @@ CREATE TABLE IF NOT EXISTS transactions (
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
--- Add circular FK after both tables exist
-ALTER TABLE revenue_events
-    ADD CONSTRAINT fk_revenue_events_transaction
-    FOREIGN KEY (transaction_id) REFERENCES transactions(id);
+-- Add circular FKs after both tables exist.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_attribute source_column
+          ON source_column.attrelid = c.conrelid
+         AND source_column.attnum = ANY (c.conkey)
+        JOIN pg_attribute target_column
+          ON target_column.attrelid = c.confrelid
+         AND target_column.attnum = ANY (c.confkey)
+        WHERE c.contype = 'f'
+          AND c.conrelid = 'revenue_events'::regclass
+          AND c.confrelid = 'transactions'::regclass
+          AND source_column.attname = 'transaction_id'
+          AND target_column.attname = 'id'
+    ) THEN
+        ALTER TABLE revenue_events
+            ADD CONSTRAINT fk_revenue_events_transaction
+            FOREIGN KEY (transaction_id) REFERENCES transactions(id);
+    END IF;
+END $$;
 
-ALTER TABLE transactions
-    ADD CONSTRAINT fk_transactions_revenue_event
-    FOREIGN KEY (revenue_event_id) REFERENCES revenue_events(id);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_attribute source_column
+          ON source_column.attrelid = c.conrelid
+         AND source_column.attnum = ANY (c.conkey)
+        JOIN pg_attribute target_column
+          ON target_column.attrelid = c.confrelid
+         AND target_column.attnum = ANY (c.confkey)
+        WHERE c.contype = 'f'
+          AND c.conrelid = 'transactions'::regclass
+          AND c.confrelid = 'revenue_events'::regclass
+          AND source_column.attname = 'revenue_event_id'
+          AND target_column.attname = 'id'
+    ) THEN
+        ALTER TABLE transactions
+            ADD CONSTRAINT fk_transactions_revenue_event
+            FOREIGN KEY (revenue_event_id) REFERENCES revenue_events(id);
+    END IF;
+END $$;
 
 -- Performance indexes
 CREATE INDEX IF NOT EXISTS idx_transactions_user_created    ON transactions (user_id, created_at DESC);
