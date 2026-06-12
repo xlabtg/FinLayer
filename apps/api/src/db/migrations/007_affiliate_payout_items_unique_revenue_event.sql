@@ -1,4 +1,4 @@
--- Migration: 005_affiliate_payout_items_unique_revenue_event
+-- Migration: 007_affiliate_payout_items_unique_revenue_event
 -- Description: Ensure each revenue event can be attached to only one payout item.
 -- Fixes issue #28.
 

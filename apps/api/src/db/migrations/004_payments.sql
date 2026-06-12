@@ -1,4 +1,4 @@
--- Migration: 003_payments
+-- Migration: 004_payments
 -- Description: Payments module — invoices, provider webhook events with idempotency
 
 BEGIN;

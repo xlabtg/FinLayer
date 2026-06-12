@@ -3,7 +3,7 @@ import { readFile } from 'fs/promises';
 
 const initialSchemaUrl = new URL('../db/migrations/001_initial_schema.sql', import.meta.url);
 const pendingAffiliateIndexMigrationUrl = new URL(
-  '../db/migrations/006_revenue_events_pending_affiliate_index.sql',
+  '../db/migrations/008_revenue_events_pending_affiliate_index.sql',
   import.meta.url
 );
 

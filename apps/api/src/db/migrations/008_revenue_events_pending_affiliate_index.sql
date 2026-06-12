@@ -1,4 +1,4 @@
--- Migration: 006_revenue_events_pending_affiliate_index
+-- Migration: 008_revenue_events_pending_affiliate_index
 -- Description: Add a partial index for pending affiliate revenue event scans.
 -- Fixes issue #29.
 

@@ -1,4 +1,4 @@
--- Migration: 003_wallet_phase4
+-- Migration: 005_wallet_phase4
 -- Description: Phase 4 — HD wallet storage, payout batches, and extended wallet fields.
 --
 -- Security note: Encrypted mnemonics are stored server-side ONLY to enable deterministic
