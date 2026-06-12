@@ -1,11 +1,13 @@
 /**
- * Tests for API key authentication (issue #14).
+ * Tests for API key authentication.
  *
  * Regression coverage:
  *  1. Authentication is deterministic with >20 active keys sharing the same
  *     prefix (the old `LIMIT 20` prefix scan could miss a valid key).
  *  2. Each validation performs at most ONE bcrypt.compare, regardless of how
  *     many keys share the prefix (the old code did up to 20 → CPU-DoS vector).
+ *  3. The background `last_used_at` update handles write failures locally
+ *     instead of surfacing an unhandled rejection (issue #37).
  *
  * `bcryptjs` is mocked so we can (a) count compare calls deterministically and
  * (b) keep the suite fast and independent of the native hashing cost.
@@ -31,7 +33,7 @@ const { parseApiKey } = await import('@finlayer/utils');
 const { UnauthorizedError, RateLimitError } = await import('../../../../modules/shared/errors/index.js');
 const { createMockSql, createTestUserId } = await import('./setup.js');
 
-describe('AuthService — API key validation (issue #14)', () => {
+describe('AuthService — API key validation', () => {
   let service: InstanceType<typeof AuthService>;
   let mockSql: ReturnType<typeof createMockSql>;
 
@@ -51,6 +53,26 @@ describe('AuthService — API key validation (issue #14)', () => {
       secrets.push(secret);
     }
     return secrets;
+  }
+
+  function failLastUsedAtUpdate(
+    sql: ReturnType<typeof createMockSql>,
+    error: Error
+  ): ReturnType<typeof createMockSql> {
+    return new Proxy(
+      function (strings: TemplateStringsArray, ...values: unknown[]) {
+        const query = strings.join('?').trim().toUpperCase();
+        if (query.startsWith('UPDATE API_KEYS') && query.includes('LAST_USED_AT')) {
+          return Promise.reject(error);
+        }
+        return sql(strings, ...values);
+      },
+      {
+        get(_target, prop) {
+          return sql[prop as keyof typeof sql];
+        },
+      }
+    ) as ReturnType<typeof createMockSql>;
   }
 
   test('authentication is deterministic with >20 active live keys', async () => {
@@ -174,5 +196,29 @@ describe('AuthService — API key validation (issue #14)', () => {
     expect(cache.size()).toBe(0);
 
     await cache.close();
+  });
+
+  test('last_used_at update failures do not become unhandled rejections', async () => {
+    const userId = createTestUserId();
+    const updateError = new Error('last_used_at update failed');
+    const sql = failLastUsedAtUpdate(mockSql, updateError);
+    service = new AuthService(sql as never);
+    const { secret } = await service.createApiKey(userId, {
+      name: 'background-last-used',
+      scopes: ['swap:read'],
+    });
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      await expect(service.validateApiKey(secret)).resolves.toMatchObject({ user_id: userId });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
   });
 });
