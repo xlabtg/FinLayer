@@ -18,21 +18,42 @@ const CreateAddressSchema = z.object({
   label: z.string().max(255).optional(),
 });
 
+const MOCK_BALANCE_PROVIDER_ENVIRONMENTS = new Set(['development', 'test']);
+const MOCK_BALANCE_PROVIDER_FLAG = 'WALLET_ENABLE_MOCK_BALANCE_PROVIDER';
+
+function shouldRegisterMockBalanceProvider(env: NodeJS.ProcessEnv): boolean {
+  const explicitFlag = env[MOCK_BALANCE_PROVIDER_FLAG];
+  if (explicitFlag !== undefined) {
+    return explicitFlag.toLowerCase() === 'true';
+  }
+
+  const nodeEnv = env['NODE_ENV'];
+  return nodeEnv !== undefined && MOCK_BALANCE_PROVIDER_ENVIRONMENTS.has(nodeEnv);
+}
+
 /**
- * Build the balance provider registry from environment. A mock provider is
- * always registered so local development works without any API keys.
+ * Build the balance provider registry from environment. Mock balances are
+ * limited to development/test, or an explicit opt-in flag, so production does
+ * not silently return fixture data.
  */
-function buildBalanceProviders(): Map<string, IWalletBalanceProvider> {
+export function buildBalanceProviders(
+  env: NodeJS.ProcessEnv = process.env
+): Map<string, IWalletBalanceProvider> {
   const providers = new Map<string, IWalletBalanceProvider>();
 
-  const alchemyKey = process.env['ALCHEMY_API_KEY'];
+  const alchemyKey = env['ALCHEMY_API_KEY'];
   if (alchemyKey) {
     providers.set('Alchemy', new AlchemyBalanceProvider(alchemyKey));
     logger.info('Alchemy balance provider initialized');
   }
 
-  // Mock provider covers all networks so /wallet/balance never 502s in dev.
-  providers.set('MockBalance', new MockBalanceProvider());
+  if (shouldRegisterMockBalanceProvider(env)) {
+    providers.set('MockBalance', new MockBalanceProvider());
+    logger.info('Mock balance provider initialized');
+  } else if (!providers.size) {
+    logger.warn('No wallet balance provider configured; balance requests will fail until a provider is configured');
+  }
+
   return providers;
 }
 
