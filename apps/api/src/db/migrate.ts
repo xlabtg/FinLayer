@@ -7,7 +7,7 @@ import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { sql } from './client.js';
-import { logger } from '../../../modules/shared/utils/logger.js';
+import { logger } from '../../../../modules/shared/utils/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, 'migrations');
