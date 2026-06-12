@@ -310,4 +310,4 @@ bun test apps/api/src/tests/swap.test.ts
 
 ## License
 
-MIT — See [LICENSE](LICENSE)
+See [LICENSE](LICENSE)
