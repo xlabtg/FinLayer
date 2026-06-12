@@ -19,7 +19,7 @@ import sentryPlugin from '../../../modules/observability/sentry.js';
 import { authRoutes } from '../../../modules/auth/routes.js';
 import { swapRoutes } from '../../../modules/swap/routes.js';
 import { earnRoutes } from '../../../modules/earn/routes.js';
-import { affiliateRoutes } from '../../../modules/affiliate/routes.js';
+import { affiliateRedirectRoutes, affiliateRoutes } from '../../../modules/affiliate/routes.js';
 import { paymentsRoutes } from '../../../modules/payments/routes.js';
 import { analyticsRoutes } from '../../../modules/analytics/routes.js';
 import { marketplaceRoutes } from '../../../modules/marketplace/routes.js';
@@ -203,7 +203,7 @@ Authorization: Bearer fl_live_<your-key>
   }, { prefix: `/${API_VERSION}` });
 
   // Affiliate redirect routes (outside /v1/ prefix)
-  app.register(affiliateRoutes);
+  app.register(affiliateRedirectRoutes);
 
   return app;
 }

@@ -1,6 +1,6 @@
 /**
  * modules/affiliate/routes.ts
- * Affiliate API routes: /v1/affiliate/
+ * Affiliate API routes and public redirect routes.
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -121,9 +121,14 @@ export async function affiliateRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({ data: summary });
   });
 
+}
+
+export async function affiliateRedirectRoutes(fastify: FastifyInstance): Promise<void> {
+  const affiliateService = new AffiliateService(fastify.sql);
+
   /**
    * GET /r/:code
-   * Affiliate link redirect (registered at root, not /v1/affiliate/).
+   * Affiliate link redirect, registered at root.
    */
   fastify.get('/r/:code', {
     schema: {
