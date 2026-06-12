@@ -14,6 +14,8 @@ export interface FinLayerClientConfig {
   timeout?: number;
   /** Default affiliate ID to attach to all requests */
   affiliateId?: string;
+  /** Default affiliate link ID to attach to revenue-bearing requests */
+  affiliateLinkId?: string;
 }
 
 export class FinLayerApiError extends Error {
@@ -39,12 +41,14 @@ export class FinLayerClient {
   private readonly apiKey: string;
   private readonly timeout: number;
   private readonly affiliateId?: string;
+  private readonly affiliateLinkId?: string;
 
   constructor(config: FinLayerClientConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = (config.baseUrl ?? 'https://api.finlayer.io').replace(/\/$/, '');
     this.timeout = config.timeout ?? 30000;
     this.affiliateId = config.affiliateId;
+    this.affiliateLinkId = config.affiliateLinkId;
   }
 
   async request<T>(
@@ -101,10 +105,14 @@ export class FinLayerClient {
     }
   }
 
-  /** Merge request body with default affiliate_id if set */
-  protected withAffiliate<T extends object>(body: T): T & { affiliate_id?: string } {
-    if (this.affiliateId) {
-      return { ...body, affiliate_id: this.affiliateId };
+  /** Merge request body with default affiliate attribution if set */
+  protected withAffiliate<T extends object>(body: T): T & { affiliate_id?: string; affiliate_link_id?: string } {
+    if (this.affiliateId || this.affiliateLinkId) {
+      return {
+        ...body,
+        ...(this.affiliateId ? { affiliate_id: this.affiliateId } : {}),
+        ...(this.affiliateLinkId ? { affiliate_link_id: this.affiliateLinkId } : {}),
+      };
     }
     return body;
   }

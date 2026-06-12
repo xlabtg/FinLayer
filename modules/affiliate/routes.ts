@@ -144,9 +144,9 @@ export async function affiliateRedirectRoutes(fastify: FastifyInstance): Promise
     },
   }, async (request, reply) => {
     const { code } = request.params as { code: string };
-    const targetUrl = await affiliateService.recordClick(code);
+    const click = await affiliateService.recordClick(code);
 
-    if (!targetUrl) {
+    if (!click) {
       return reply.status(404).send({
         error: {
           code: 'LINK_NOT_FOUND',
@@ -157,6 +157,19 @@ export async function affiliateRedirectRoutes(fastify: FastifyInstance): Promise
       });
     }
 
+    const targetUrl = appendAffiliateAttribution(
+      click.target_url,
+      click.affiliate_id,
+      click.affiliate_link_id
+    );
+
     return reply.status(302).header('Location', targetUrl).send();
   });
+}
+
+function appendAffiliateAttribution(targetUrl: string, affiliateId: string, affiliateLinkId: string): string {
+  const url = new URL(targetUrl);
+  url.searchParams.set('affiliate_id', affiliateId);
+  url.searchParams.set('affiliate_link_id', affiliateLinkId);
+  return url.toString();
 }

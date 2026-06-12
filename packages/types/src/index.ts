@@ -127,6 +127,7 @@ export interface Transaction {
 
   // Affiliate & revenue
   affiliate_id: UUID | null;
+  affiliate_link_id: UUID | null;
   revenue_event_id: UUID | null;
 
   // Domain metadata (flexible)
@@ -145,6 +146,7 @@ export interface SwapQuoteRequest {
   from_network?: string;    // e.g. "bitcoin"
   to_network?: string;      // e.g. "ethereum"
   affiliate_id?: UUID;
+  affiliate_link_id?: UUID;
   idempotency_key?: string;
 }
 
@@ -177,6 +179,7 @@ export interface SwapExecuteRequest {
   recipient_address: string;
   refund_address?: string;
   affiliate_id?: UUID;
+  affiliate_link_id?: UUID;
   idempotency_key: string;    // Required for all state-changing ops
 }
 
@@ -209,6 +212,7 @@ export interface InvoiceCreateRequest {
   expires_in_seconds?: number;
   callback_url?: string;
   affiliate_id?: UUID;
+  affiliate_link_id?: UUID;
   idempotency_key: string;
   metadata?: Record<string, unknown>;
 }
@@ -270,6 +274,7 @@ export interface EarnDepositRequest {
   amount: Numeric;
   from_address: string;
   affiliate_id?: UUID;
+  affiliate_link_id?: UUID;
   idempotency_key: string;
 }
 
@@ -301,6 +306,7 @@ export interface EarnWithdrawRequest {
   position_id: UUID;
   to_address: string;
   affiliate_id?: UUID;
+  affiliate_link_id?: UUID;
   idempotency_key: string;
 }
 
@@ -390,6 +396,7 @@ export interface RevenueEvent {
   platform_share: Numeric;    // e.g. "0.60" = 60%
   affiliate_share: Numeric;   // e.g. "0.40" = 40%
   affiliate_id: UUID | null;
+  affiliate_link_id: UUID | null;
   distributed_at: ISO8601 | null;
   created_at: ISO8601;
 }

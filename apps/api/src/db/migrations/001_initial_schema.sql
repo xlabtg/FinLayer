@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS revenue_events (
     platform_share  NUMERIC(5,4) NOT NULL DEFAULT 0.6,  -- 60%
     affiliate_share NUMERIC(5,4) NOT NULL DEFAULT 0.4,  -- 40%
     affiliate_id    UUID         REFERENCES affiliates(id),
+    affiliate_link_id UUID       REFERENCES affiliate_links(id),
     distributed_at  TIMESTAMPTZ,
     metadata        JSONB        NOT NULL DEFAULT '{}',
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
@@ -105,6 +106,8 @@ CREATE TABLE IF NOT EXISTS revenue_events (
 CREATE INDEX IF NOT EXISTS idx_revenue_events_pending_affiliate
     ON revenue_events (affiliate_id)
     WHERE distributed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_revenue_events_affiliate_link
+    ON revenue_events (affiliate_link_id);
 
 -- ─── Unified Transaction Ledger ───────────────────────────────────────────────
 -- Critical: Single table enables unified accounting & cross-domain analytics
@@ -139,6 +142,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 
     -- Affiliate & revenue
     affiliate_id      UUID         REFERENCES affiliates(id),
+    affiliate_link_id UUID         REFERENCES affiliate_links(id),
     revenue_event_id  UUID,        -- FK to revenue_events (circular, handled below)
 
     -- Timestamps
@@ -198,6 +202,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_user_created    ON transactions (use
 CREATE INDEX IF NOT EXISTS idx_transactions_type_status     ON transactions (type, status);
 CREATE INDEX IF NOT EXISTS idx_transactions_provider        ON transactions (provider_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_affiliate       ON transactions (affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_affiliate_link  ON transactions (affiliate_link_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_idempotency_key ON transactions (idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_transactions_provider_tx_id  ON transactions (provider_tx_id);
 

@@ -236,6 +236,25 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
         return Promise.resolve([row]);
       }
 
+      if (query.startsWith('SELECT') && query.includes('FROM AFFILIATE_LINKS L') && query.includes('JOIN AFFILIATES A')) {
+        const linkId = values[0];
+        const links = initTable('affiliate_links');
+        const affiliates = initTable('affiliates');
+        const rows = links
+          .filter(r => r['id'] === linkId)
+          .map(r => {
+            const affiliate = affiliates.find(a => a['id'] === r['affiliate_id']);
+            if (!affiliate) return null;
+            return {
+              id: r['id'],
+              affiliate_id: r['affiliate_id'],
+              user_id: affiliate['user_id'],
+            };
+          })
+          .filter(Boolean);
+        return Promise.resolve(rows);
+      }
+
       if (query.startsWith('SELECT') && query.includes('FROM AFFILIATE_LINKS')) {
         const links = initTable('affiliate_links');
         if (query.includes('WHERE AFFILIATE_ID =')) {
@@ -256,6 +275,17 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('UPDATE AFFILIATE_LINKS')) {
+        if (query.includes('CONVERSIONS = CONVERSIONS + 1')) {
+          const [linkId, affiliateId] = values as [string, string];
+          const row = initTable('affiliate_links').find(r =>
+            r['id'] === linkId && r['affiliate_id'] === affiliateId
+          );
+          if (row) {
+            row['conversions'] = Number(row['conversions'] ?? 0) + 1;
+          }
+          return Promise.resolve([]);
+        }
+
         const shortCode = values[0];
         const row = initTable('affiliate_links').find(r => r['short_code'] === shortCode);
         if (row) {
@@ -394,7 +424,7 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
           if (typeof row[dateCol] === 'string') row[dateCol] = new Date(row[dateCol] as string);
         }
         // Fill in columns the services read back later but didn't set here.
-        for (const def of ['to_asset', 'provider_tx_id', 'revenue_event_id', 'result_amount', 'fee_amount', 'fee_asset', 'affiliate_id']) {
+        for (const def of ['to_asset', 'provider_tx_id', 'revenue_event_id', 'result_amount', 'fee_amount', 'fee_asset', 'affiliate_id', 'affiliate_link_id']) {
           if (!(def in row)) row[def] = null;
         }
 
@@ -419,18 +449,37 @@ export function createMockSql(): SQL & { _tables: Map<string, MockRow[]> } {
       }
 
       if (query.startsWith('INSERT INTO REVENUE_EVENTS')) {
+        const colMatch = query.match(/INSERT INTO REVENUE_EVENTS\s*\(([\s\S]*?)\)\s*VALUES/);
+        const cols = (colMatch?.[1] ?? '')
+          .split(',')
+          .map((c) => c.trim().toLowerCase());
+
+        const afterValues = query.slice(query.indexOf('VALUES') + 'VALUES'.length);
+        const open = afterValues.indexOf('(');
+        const close = afterValues.indexOf(')', open);
+        const valTokens = splitTopLevel(afterValues.slice(open + 1, close)).map((t) => t.trim());
+
         const row: MockRow = {
-          id: values[0],
-          transaction_id: values[1],
-          source_domain: values[2],
-          total_fee: values[3],
-          fee_asset: values[4],
-          platform_share: values[5],
-          affiliate_share: values[6],
-          affiliate_id: values[7],
           distributed_at: null,
+          metadata: {},
           created_at: new Date(),
         };
+        let vi = 0;
+        for (let i = 0; i < cols.length; i++) {
+          const token = valTokens[i] ?? '?';
+          let val: unknown;
+          if (token === '?') {
+            val = values[vi++];
+          } else if (token === 'NULL') {
+            val = null;
+          } else if (token.startsWith("'")) {
+            val = token.slice(1, -1).toLowerCase();
+          } else {
+            val = token;
+          }
+          row[cols[i]!] = val;
+        }
+        if (!('affiliate_link_id' in row)) row['affiliate_link_id'] = null;
         initTable('revenue_events').push(row);
         return Promise.resolve([row]);
       }

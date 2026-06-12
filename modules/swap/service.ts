@@ -90,6 +90,7 @@ interface DbTransaction {
   provider_id: string;
   provider_tx_id: string | null;
   affiliate_id: string | null;
+  affiliate_link_id: string | null;
   revenue_event_id: string | null;
   metadata: Record<string, unknown>;
   created_at: Date;
@@ -346,10 +347,13 @@ export class SwapService {
       throw new ValidationError(`Provider ${quoteRow.provider_name} is not available`);
     }
 
-    const affiliateId = await this.revenueService.validateAffiliateAttribution(
+    const attribution = await this.revenueService.validateRevenueAttribution(
       request.affiliate_id,
-      userId
+      userId,
+      request.affiliate_link_id
     );
+    const affiliateId = attribution.affiliateId;
+    const affiliateLinkId = attribution.affiliateLinkId;
 
     const txId = generateUUID();
     const now = nowISO();
@@ -362,13 +366,13 @@ export class SwapService {
       INSERT INTO transactions (
         id, type, domain, status, user_id,
         from_asset, to_asset, amount,
-        provider_id, idempotency_key, affiliate_id,
+        provider_id, idempotency_key, affiliate_id, affiliate_link_id,
         metadata, created_at, updated_at
       ) VALUES (
         ${txId}, 'swap', 'swap', 'pending', ${userId},
         ${quoteRow.from_asset}, ${quoteRow.to_asset}, ${quoteRow.from_amount},
         ${quoteRow.provider_id}, ${request.idempotency_key},
-        ${affiliateId},
+        ${affiliateId}, ${affiliateLinkId},
         ${JSON.stringify({
           swap: {
             quote_id: request.quote_id,
@@ -445,6 +449,7 @@ export class SwapService {
       totalFee: quoteRow.platform_fee,
       feeAsset: quoteRow.from_asset,
       affiliateId,
+      affiliateLinkId,
       payerUserId: userId,
     });
 

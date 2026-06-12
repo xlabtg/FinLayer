@@ -33,9 +33,11 @@ describe('Affiliate redirects (issue #25)', () => {
     const targetUrl = 'https://app.finlayer.io/swap?from=BTC&to=ETH';
     const link = seedAffiliateLink('safe', targetUrl);
 
-    const resolvedTarget = await service.recordClick('safe');
+    const click = await service.recordClick('safe');
 
-    expect(resolvedTarget).toBe(targetUrl);
+    expect(click?.target_url).toBe(targetUrl);
+    expect(click?.affiliate_id).toBe(link['affiliate_id']);
+    expect(click?.affiliate_link_id).toBe(link['id']);
     expect(link['clicks']).toBe(1);
   });
 

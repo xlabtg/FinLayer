@@ -19,6 +19,7 @@ const DepositRequestSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d+)?$/, 'amount must be a positive number'),
   from_address: z.string().min(10, 'from_address is required'),
   affiliate_id: z.string().uuid().optional(),
+  affiliate_link_id: z.string().uuid().optional(),
   idempotency_key: z.string().min(8).max(128),
 });
 
@@ -26,6 +27,7 @@ const WithdrawRequestSchema = z.object({
   position_id: z.string().uuid('position_id must be a valid UUID'),
   to_address: z.string().min(10, 'to_address is required'),
   affiliate_id: z.string().uuid().optional(),
+  affiliate_link_id: z.string().uuid().optional(),
   idempotency_key: z.string().min(8).max(128),
 });
 
@@ -91,6 +93,7 @@ export async function earnRoutes(fastify: FastifyInstance, opts: EarnRoutesOptio
           amount: { type: 'string' },
           from_address: { type: 'string' },
           affiliate_id: { type: 'string', format: 'uuid' },
+          affiliate_link_id: { type: 'string', format: 'uuid' },
           idempotency_key: { type: 'string', minLength: 8, maxLength: 128 },
         },
       },
@@ -128,6 +131,7 @@ export async function earnRoutes(fastify: FastifyInstance, opts: EarnRoutesOptio
           position_id: { type: 'string', format: 'uuid' },
           to_address: { type: 'string' },
           affiliate_id: { type: 'string', format: 'uuid' },
+          affiliate_link_id: { type: 'string', format: 'uuid' },
           idempotency_key: { type: 'string', minLength: 8, maxLength: 128 },
         },
       },

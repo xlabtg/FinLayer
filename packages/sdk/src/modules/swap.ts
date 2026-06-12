@@ -93,6 +93,7 @@ export class SwapModule {
     recipient_address: string;
     refund_address?: string;
     affiliate_id?: string;
+    affiliate_link_id?: string;
     idempotency_key: string;
     from_network?: string;
     to_network?: string;
@@ -104,6 +105,7 @@ export class SwapModule {
       from_network: params.from_network,
       to_network: params.to_network,
       affiliate_id: params.affiliate_id,
+      affiliate_link_id: params.affiliate_link_id,
     });
 
     return this.execute({
@@ -111,6 +113,7 @@ export class SwapModule {
       recipient_address: params.recipient_address,
       refund_address: params.refund_address,
       affiliate_id: params.affiliate_id,
+      affiliate_link_id: params.affiliate_link_id,
       idempotency_key: params.idempotency_key,
     });
   }
