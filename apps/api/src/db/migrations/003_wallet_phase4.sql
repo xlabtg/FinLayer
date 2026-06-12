@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS affiliate_payout_items (
     payout_id        UUID NOT NULL REFERENCES affiliate_payouts(id) ON DELETE CASCADE,
     revenue_event_id UUID NOT NULL REFERENCES revenue_events(id),
     amount           NUMERIC(36,18) NOT NULL,
-    PRIMARY KEY (payout_id, revenue_event_id)
+    PRIMARY KEY (payout_id, revenue_event_id),
+    CONSTRAINT affiliate_payout_items_revenue_event_id_key UNIQUE (revenue_event_id)
 );
 
 -- Updated-at trigger for new tables
