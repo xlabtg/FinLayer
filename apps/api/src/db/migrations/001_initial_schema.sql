@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS revenue_events (
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_revenue_events_pending_affiliate
+    ON revenue_events (affiliate_id)
+    WHERE distributed_at IS NULL;
+
 -- ─── Unified Transaction Ledger ───────────────────────────────────────────────
 -- Critical: Single table enables unified accounting & cross-domain analytics
 
